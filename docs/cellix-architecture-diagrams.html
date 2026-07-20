@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cellix — Architecture Flow Diagrams</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-dim: #1e3a5f;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1e3a5f 0%, #0f1419 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 2rem 2.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    header p {
+      color: var(--muted);
+      margin-top: 0.35rem;
+      font-size: 0.95rem;
+    }
+
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 2.5rem;
+      overflow-x: auto;
+      white-space: nowrap;
+      position: sticky;
+      top: 88px;
+      z-index: 99;
+    }
+
+    nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      display: inline-block;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    nav a:hover {
+      color: var(--text);
+      background: var(--accent-dim);
+    }
+
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 2.5rem 4rem;
+    }
+
+    section {
+      margin-bottom: 3.5rem;
+      scroll-margin-top: 140px;
+    }
+
+    section h2 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+      border-left: 3px solid var(--accent);
+      padding-left: 0.75rem;
+    }
+
+    section .desc {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.25rem;
+      padding-left: calc(0.75rem + 3px);
+    }
+
+    .diagram-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+
+    .diagram-card .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+
+    .badge-not-found {
+      background: #7f1d1d;
+      color: #fecaca;
+    }
+
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cellix Architecture — Flow Diagrams</h1>
+    <p>Cellix-2026 codebase · Updated July 18, 2026 · Tiering 0–3 · Ask/Plan/Act · Dashboard ops UI · FORMAT normalize · SORT Accept · <a href="CELLIX_TECHNICAL_DOCUMENTATION.md" style="color:#3b82f6">Full technical doc</a> · Mermaid.js</p>
+  </header>
+
+  <nav>
+    <a href="#user-journey">User Journey</a>
+    <a href="#system-arch">System Architecture</a>
+    <a href="#frontend-components">Frontend Components</a>
+    <a href="#frontend-flow">Frontend Flow</a>
+    <a href="#excel-addin">Excel Add-in</a>
+    <a href="#ribbon-sequence">Ribbon Sequence</a>
+    <a href="#ai-write">AI Write Path</a>
+    <a href="#complexity-tiers">Complexity Tiers</a>
+    <a href="#modes">Ask / Plan / Act</a>
+    <a href="#ai-pipeline">AI Pipeline</a>
+    <a href="#llm-router">LLM Router</a>
+    <a href="#smart-data-query">Smart Data Query</a>
+    <a href="#route-comparison">Five Routes</a>
+    <a href="#model-tiers">Model Tiers</a>
+    <a href="#api-flow">API Flow</a>
+    <a href="#backend-modules">Backend Modules</a>
+    <a href="#auth">Auth</a>
+    <a href="#database-er">Database ER</a>
+    <a href="#dfd-l0">DFD Level 0</a>
+    <a href="#dfd-l1">DFD Level 1</a>
+    <a href="#dfd-l2">DFD Level 2</a>
+    <a href="#dependencies">Dependencies</a>
+    <a href="#execution-trace">Execution Trace</a>
+    <a href="#local-routing">Local Sheet Routing</a>
+    <a href="#preview-pipeline">Preview Pipeline</a>
+    <a href="#action-normalize">Action Normalize</a>
+    <a href="#citations">Citations</a>
+    <a href="#shortcut-router">Shortcut Router</a>
+    <a href="#unified-engine">Unified Action Engine</a>
+    <a href="#agent-logging">Agent Logging</a>
+    <a href="#ops-logging">Ops Logging</a>
+    <a href="#dashboard">Dashboard</a>
+    <a href="#preview-gating">Preview Gating</a>
+  </nav>
+
+  <main>
+
+    <!-- SECTION 1: User Journey -->
+    <section id="user-journey">
+      <h2>1. User Journey</h2>
+      <p class="desc">End-to-end flow: local shortcuts, five-route LLM router, complexity tiers, Ask/Plan/Act modes, Accept/Reject preview.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    A[Open Excel] --> B[Show Taskpane]
+    B --> C[React app + mode Ask/Plan/Act]
+    C --> D[User types prompt]
+    D --> E[Office.js workbook read]
+    E --> F{Local sheet action?}
+    F -->|Empty create / delete| G[tryLocalSheetActions]
+    F -->|Needs backend| H[POST conversation SSE]
+    G --> I[Preview Accept/Reject]
+    H --> J{LlmRouter route}
+    J -->|shortcut| K[routeShortcutAction]
+    J -->|data| L[SmartDataQuery]
+    J -->|export| M[FindExportService]
+    J -->|write + Plan| N1[streamPlanOnly → plan_only]
+    J -->|write + Act| N2[handleWriteRoute tiers 0–3]
+    J -->|ask| O[streamWithOpenAi]
+    K --> P[SSE actions]
+    L --> Q[SSE answer]
+    M --> P
+    N1 --> R1[Plan card — Run as Action]
+    N2 --> P
+    O --> Q
+    P --> R{shouldPreviewActions?}
+    R -->|Yes| I
+    R -->|No| S[ActionEngine.apply]
+    I -->|Accept| S
+    S --> U[Excel]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 2: System Architecture -->
+    <section id="system-arch">
+      <h2>2. System Architecture</h2>
+      <p class="desc">Excel, React add-in, NestJS with five-route dispatcher, complexity tiers, domain-tools scaffolding, OpenRouter, MongoDB, ops Dashboard.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TB
+    subgraph ExcelHost["Microsoft Excel"]
+        WB[(Workbook)]
+    end
+
+    subgraph AddIn["Cellix Add-in — React :3000"]
+        TP[Task Pane + Mode]
+        WR[workbookReader]
+        AE[ActionEngine]
+        PM[previewManager]
+        SP[SourcePreview]
+    end
+
+    subgraph Backend["NestJS — Fastify :4001"]
+        CS[ConversationService]
+        LR[LlmRouter + Classifier]
+        T0[Tier0]
+        T1[Tier1]
+        T2[Tier2 GenVerify]
+        ORCH[Orchestrator Tier3]
+        NORM[normalizeExecutorOutput]
+        SDQ[SmartDataQuery]
+        DT[DomainTools stubs]
+        CSVC[ChangeSet + provenance]
+        LOGS[request + planner loggers]
+    end
+
+    subgraph Ops["Dashboard — Next :3100"]
+        DASH[Request / Planner viewers]
+    end
+
+    subgraph External["OpenRouter"]
+        LOW[LOW]
+        MED[MEDIUM]
+        HIGH[HIGH]
+    end
+
+    subgraph Data["MongoDB"]
+        MONGO[(conversations / change_sets / audit)]
+        OPSDB[(request_logs / planner_logs)]
+    end
+
+    WB <--> WR
+    TP --> PM
+    PM --> AE
+    AE --> WB
+    TP --> CS
+    CS --> LR
+    LR -->|write| T0
+    LR -->|write| T1
+    LR -->|write| T2
+    LR -->|write| ORCH
+    ORCH --> NORM
+    NORM --> CSVC
+    LR -->|data| SDQ
+    CS --> LOGS
+    LOGS --> OPSDB
+    OPSDB --> DASH
+    ORCH --> HIGH
+    T1 --> LOW
+    T2 --> MED
+    SDQ --> MED
+    CSVC --> MONGO
+    CS --> MONGO
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 3: Frontend Component Diagram -->
+    <section id="frontend-components">
+      <h2>3. Frontend Component Diagram</h2>
+      <p class="desc">React component tree, services, engines, and API layer.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+graph TB
+    subgraph Entry
+        HTML[taskpane.html]
+        TS[taskpane.ts]
+        OfficeJS[Office.js CDN]
+    end
+
+    subgraph AppLayer
+        App[App.tsx]
+        UC[useConversation]
+    end
+
+    subgraph UI
+        CP[ConversationPanel]
+        TR[TurnRenderer]
+        SS[SheetSelector]
+        SCV[SheetCompareView]
+        CLP[ClarificationPanel]
+        PSB[PreviewSummaryBar]
+        CHP[ChangeHistoryPanel]
+        SPV[SourcePreview]
+        DPP[DiffPreviewPanel legacy]
+    end
+
+    subgraph LocalRouting
+        LSA[localSheetActions]
+        PP[previewPolicy]
+        PR[previewRevert]
+    end
+
+    subgraph Services
+        SCB[sheetContextBuilder]
+        PM[previewManager]
+        FG[formatGuard]
+    end
+
+    subgraph Engines
+        AE[ActionEngine facade]
+        LC[legacyConverter]
+        RAE[RichActionEngine]
+        AN[actionNormalizer]
+        WH[worksheet.handler]
+    end
+
+    subgraph ContextPipeline
+        WR[workbookReader]
+        CA[contextAdapter]
+        CC[contextCompressor]
+    end
+
+    subgraph API
+        AC[apiConfig]
+        PC[payloadCompressor]
+        SSE[sseParser]
+    end
+
+    HTML --> OfficeJS
+    HTML --> TS
+    TS --> App
+    App --> UC
+    App --> CP
+    CP --> TR
+    CP --> SS
+    CP --> SCV
+    CP --> CLP
+    CP --> PSB
+    CP --> CHP
+    CHP --> SPV
+    CP --> DPP
+    UC --> LSA
+    UC --> PP
+    PM --> PR
+    App --> PP
+    UC --> AC
+    UC --> PC
+    UC --> SSE
+    App --> SCB
+    SCB --> WR
+    SCB --> CA
+    App --> PM
+    App --> AE
+    AE --> AN
+    AN --> LC
+    LC --> RAE
+    RAE --> WH
+    AE --> FG
+    WR --> ExcelAPI[(Excel API)]
+    PM --> ExcelAPI
+    RAE --> ExcelAPI
+    SPV --> ExcelAPI
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 4: Frontend Flow -->
+    <section id="frontend-flow">
+      <h2>4. Frontend Execution Flow</h2>
+      <p class="desc">Boot → read workbook → local routing or API → SSE → preview/apply (no cell highlighting).</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    A[taskpane.html] --> B[Office.onReady]
+    B --> C[App.tsx]
+    C --> D[useConversation.sendMessage]
+    D --> E[buildWorkbookContext]
+    E --> F[workbookReader Excel.run]
+    F --> G{tryLocalSheetActions}
+    G -->|delete / empty create| H[dispatchLocalSheetActions]
+    H --> I{shouldPreviewActions}
+    G -->|data / copy / sort| J[prepareConversationRequestPayload]
+    J --> K[fetch POST /api/excel-ai/conversation]
+    K --> L[processStream SSE]
+    L --> I
+    I -->|Yes| M[previewManager.render or highlightChanges]
+    M --> N[DiffPreviewPanel / PreviewSummaryBar / ChangeHistoryPanel]
+    N --> O[User Accept]
+    O --> P[ActionEngine.applyActions]
+    I -->|No| P
+    P --> Q[RichActionEngine unified handlers]
+    Q --> R[Excel.run context.sync]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 5: Excel Add-in Workflow -->
+    <section id="excel-addin">
+      <h2>5. Excel Add-in Workflow</h2>
+      <p class="desc">Ribbon button → task pane iframe → React ↔ Office.js ↔ Backend.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    Excel[Microsoft Excel] --> Ribbon[Ribbon: Show Taskpane]
+    Ribbon --> Iframe[Task Pane iframe]
+    Iframe --> React[React App]
+    React --> OfficeJS[Office.js Excel.run]
+    OfficeJS --> Excel
+    React --> Backend[NestJS Backend]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 6: Ribbon Sequence -->
+    <section id="ribbon-sequence">
+      <h2>6. Ribbon → First Interaction Sequence</h2>
+      <p class="desc">Step-by-step when user clicks Show Taskpane and sends first prompt.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Excel
+    participant Manifest as manifest.xml
+    participant Vite as Vite :3000 HTTPS
+    participant OfficeJS as office.js
+    participant React as App.tsx
+    participant XLAPI as Excel JS API
+
+    User->>Excel: Click "Show Taskpane"
+    Excel->>Manifest: Resolve Taskpane.Url
+    Excel->>Vite: GET /src/taskpane/taskpane.html
+    Vite-->>Excel: HTML + module taskpane.ts
+    Excel->>OfficeJS: Load CDN office.js
+    OfficeJS->>React: Office.onReady(Excel)
+    React->>React: createRoot render App
+    React->>XLAPI: SheetSelector Excel.run load sheets
+    XLAPI-->>React: worksheet names
+    User->>React: Type prompt + Send
+    React->>XLAPI: buildWorkbookContext
+    React->>Vite: POST /api/excel-ai/conversation
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 7: AI Write Path Sequence -->
+    <section id="ai-write">
+      <h2>7. AI Workflow — Write Path Sequence (Tier 3)</h2>
+      <p class="desc">When executable tier is 3: Planner → Executor → Verifier → ChangeSet with sourceRefs → Excel apply. Tiers 0–2 short-circuit earlier.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+sequenceDiagram
+    participant FE as Frontend
+    participant CS as ConversationService
+    participant LR as LlmRouterService
+    participant OR as OrchestratorService
+    participant PA as PlannerAgent
+    participant AL as AgenticLoopService
+    participant EA as ExecutorAgent
+    participant VE as VerifierAgent
+    participant CSVC as ChangeSetService
+    participant LLM as OpenRouter HIGH
+
+    FE->>CS: POST conversation mode=action
+    CS->>LR: route(message)
+    LR-->>CS: write + complexity=3
+    CS->>OR: streamWithOrchestrator
+    OR->>PA: plan(...)
+    PA->>LLM: complete
+    LLM-->>PA: subtasks
+    OR->>AL: run(subtasks)
+    loop each subtask
+        AL->>EA: execute
+        EA->>LLM: complete
+        LLM-->>EA: actions
+    end
+    AL->>VE: verify
+    VE->>LLM: complete
+    OR-->>CS: Action[]
+    CS->>CSVC: createPreview + workbook sourceRefs
+    CS-->>FE: SSE actions + changeSet
+    FE->>FE: preview → Accept → Excel
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 7b: Complexity Tiers -->
+    <section id="complexity-tiers">
+      <h2>7b. Complexity Tier Dispatch</h2>
+      <p class="desc">handleWriteRoute under ENABLE_COMPLEXITY_TIERING (off / shadow / tier01 / full). Shadow logs classifiedTier but always executes Tier 3.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    W[route=write Action mode] --> DEL{Local delete sheet?}
+    DEL -->|Yes| DS[DELETE_SHEET]
+    DEL -->|No| CL[classifiedTier from classifier]
+    CL --> FLAG{ENABLE_COMPLEXITY_TIERING}
+    FLAG -->|off / shadow| T3
+    FLAG -->|tier01 and tier≥2| T3
+    FLAG -->|full or tier01≤1| EX{executable tier}
+    EX -->|0| T0[Tier0DirectService — 0 LLM]
+    EX -->|1| T1[Tier1SingleAction — 1 LLM]
+    EX -->|2| T2[Tier2GenerateVerify — Executor+Verifier]
+    EX -->|3| T3[streamWithOrchestrator]
+    T0 --> SSE[SSE actions]
+    T1 --> SSE
+    T2 --> CS[ChangeSet + sourceRefs]
+    T3 --> CS
+    CS --> SSE
+    FLAG -.-> LOG[tier_decision log]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 7c: Modes -->
+    <section id="modes">
+      <h2>7c. Ask / Plan / Act Modes</h2>
+      <p class="desc">User-controlled modes. Plan mode never creates a ChangeSet. Act is the default alias for action.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    M{mode}
+    M -->|ask| RO[Read-only stream / SmartDataQuery]
+    M -->|plan + write| PO[streamPlanOnly]
+    PO --> P0{tier}
+    P0 -->|0/1| DESC[describeIntendedAction]
+    P0 -->|2| GO[tier2.generateOnly]
+    P0 -->|3| PL[orchestrator.planOnly]
+    DESC --> POL[SSE plan_only]
+    GO --> POL
+    PL --> POL
+    POL --> RUN[Run as Action → mode=action]
+    M -->|action / act| WR[handleWriteRoute / shortcuts]
+    WR --> PREV[Preview Accept/Reject]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 8: AI Pipeline Decision Tree -->
+    <section id="ai-pipeline">
+      <h2>8. AI Pipeline — Decision Tree</h2>
+      <p class="desc">ConversationService dispatch including mode, complexity classifier, and tiered write handlers.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    START[POST /excel-ai/conversation] --> MODE[normalizeAssistantMode]
+    MODE --> TABLE{Table on sheet + Action?}
+    TABLE -->|Yes| DET[Deterministic WRITE_TABLE]
+    TABLE -->|No| ROUTER[LlmRouterService.route]
+    ROUTER --> RTYPE{route}
+    RTYPE -->|shortcut| SHRT[routeShortcutAction]
+    RTYPE -->|data| SDQ[SmartDataQuery]
+    RTYPE -->|export| FEX[FindExport]
+    RTYPE -->|write + plan| PLANONLY[streamPlanOnly]
+    RTYPE -->|write + action| WRITE[handleWriteRoute]
+    RTYPE -->|ask| STREAM[streamWithOpenAi]
+    WRITE --> TIERS[Tier 0 / 1 / 2 / 3]
+    TIERS --> EMIT[SSE answer + actions]
+    PLANONLY --> POL[SSE plan_only]
+    SHRT --> EMIT
+    FEX --> EMIT
+    DET --> EMIT
+    SDQ --> ANS[SSE answer]
+    STREAM --> ANS
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 8b: LLM Router -->
+    <section id="llm-router">
+      <h2>8b. LLM Router — Priority Decision Tree</h2>
+      <p class="desc">Priority: instant regex → data keywords → mode short-circuit → complexity classifier → LOW-tier LLM. File: llm-router.service.ts + complexity-classifier.util.ts</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    MSG[User message] --> INST{Instant shortcut regex?}
+    INST -->|freeze/unfreeze/protect/zoom| SC[route = shortcut]
+    INST -->|No| DATA{Data keyword fast lane?}
+    DATA -->|find/sum/count/total…| DT[route = data]
+    DATA -->|No| MODE{mode !== action?}
+    MODE -->|Yes| ASK[route = ask]
+    MODE -->|No| CX{classifyComplexity?}
+    CX -->|tier 0–3| WR[route = write + complexity + actionHint]
+    CX -->|miss| LLM[LOW-tier LLM JSON]
+    LLM --> DECISION["route + optional complexity"]
+    Note over DATA,DT: Data fast lane runs BEFORE mode short-circuit
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 8c: Smart Data Query -->
+    <section id="smart-data-query">
+      <h2>8c. Smart Data Query — Column Slicer Sequence</h2>
+      <p class="desc">route=data: resolve sheet → slice relevant columns → MEDIUM LLM computes answer. Replaces deterministic DataQuery aggregation path.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+sequenceDiagram
+    participant FE as Frontend
+    participant CS as ConversationService
+    participant LR as LlmRouter
+    participant SDQ as SmartDataQueryService
+    participant SL as column-slicer.util
+    participant OR as OpenRouter MEDIUM
+
+    FE->>CS: "What is the total CGST?"
+    CS->>LR: route(message)
+    LR-->>CS: route=data
+    CS->>CS: resolveActiveSheetData
+    Note over CS: tool_request if sheet truncated
+    CS->>SDQ: handleQuery(message, sheetData, context)
+    SDQ->>SL: sliceRelevantColumns
+    SL-->>SDQ: CGST + Date + Voucher cols
+    SDQ->>FE: SSE thinking
+    SDQ->>OR: complete(system + pipe table, text)
+    OR-->>SDQ: "Total CGST is ₹2,57,583.55…"
+    SDQ-->>CS: answer string
+    CS-->>FE: SSE answer
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 8d: Five Route Comparison -->
+    <section id="route-comparison">
+      <h2>8d. Five Routes — Comparison</h2>
+      <p class="desc">What each LlmRouter route does: LLM tier, output shape, and typical prompts.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    subgraph shortcut_path["shortcut"]
+        S1[No / LOW only if LLM-routed]
+        S2[Layout SheetAction]
+        S3["freeze top row"]
+    end
+    subgraph data_path["data"]
+        D1[MEDIUM]
+        D2[Natural-language answer]
+        D3["total CGST / find invoice"]
+    end
+    subgraph export_path["export"]
+        E1[No agent LLM]
+        E2[CREATE_SHEET + WRITE_TABLE]
+        E3["find X and copy to new sheet"]
+    end
+    subgraph write_path["write"]
+        W1[Tier 0–3 dispatch]
+        W2[Actions + change set + sourceRefs]
+        W3["create GST summary / freeze / formula"]
+    end
+    subgraph ask_path["ask"]
+        A1[Streaming LLM]
+        A2[Answer / clarification]
+        A3["explain this formula"]
+    end
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 8e: Model Tiers -->
+    <section id="model-tiers">
+      <h2>8e. OpenRouter Model Tier Map</h2>
+      <p class="desc">Env-driven tiers: OPENROUTER_MODEL_LOW / MEDIUM / HIGH.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TB
+    ENV[AppConfigService] --> LOW[LOW tier]
+    ENV --> MED[MEDIUM tier]
+    ENV --> HIGH[HIGH tier]
+    LOW --> R[LlmRouterService]
+    MED --> SDQ[SmartDataQueryService]
+    HIGH --> P[PlannerAgent]
+    HIGH --> E[ExecutorAgent]
+    HIGH --> V[VerifierAgent]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 9: API Flow -->
+    <section id="api-flow">
+      <h2>9. API Flow Diagram</h2>
+      <p class="desc">All HTTP endpoints and their service dependencies.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TB
+    subgraph Client
+        FE[Excel Add-in]
+    end
+
+    subgraph NestJS
+        CC[ConversationController]
+        CS[ConversationService]
+        SC[SheetsController]
+        MS[MultiSheetService]
+        HC[HealthController]
+        AC[AuditController]
+    end
+
+    subgraph External
+        OR[OpenRouter API]
+        OAI[OpenAI API fallback]
+    end
+
+    subgraph Data
+        MONGO[(MongoDB)]
+    end
+
+    FE -->|POST /excel-ai/conversation| CC
+    CC --> CS
+    CS --> OR
+    CS --> OAI
+    CS --> MONGO
+
+    FE -->|POST /sheets/compare| SC
+    SC --> MS
+    MS --> OR
+
+    FE -->|GET /health| HC
+
+    Admin[Admin CLI] -.->|GET /audit/*| AC
+    AC --> MONGO
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 10: Backend Modules -->
+    <section id="backend-modules">
+      <h2>10. Backend Module Dependency Graph</h2>
+      <p class="desc">NestJS module wiring from AppModule. virtual/ is a code folder used by agents, not an AppModule import.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    MAIN[main.ts Fastify bootstrap] --> APP[AppModule]
+
+    APP --> CFG[AppConfigModule]
+    APP --> DB[DatabaseModule]
+    APP --> AUD[AuditModule]
+    APP --> DT[DomainToolsModule]
+    APP --> HLTH[HealthModule]
+    APP --> EXAI[ExcelAiModule]
+    APP --> SH[SheetsModule]
+
+    EXAI --> LLM[LlmModule]
+    EXAI --> AGT[AgentsModule]
+    EXAI --> FRM[FormulaModule]
+    EXAI --> AUD
+
+    AGT --> LLM
+    AGT --> SL[StructuredLogger]
+    AGT --> FRM
+
+    EXAI --> CC[ConversationController]
+    CC --> CS[ConversationService]
+    CS --> LR[LlmRouter + Classifier]
+    CS --> T0[Tier0Direct]
+    CS --> T1[Tier1SingleAction]
+    CS --> T2[Tier2GenerateVerify]
+    CS --> SDQ[SmartDataQueryService]
+    CS --> FEX[FindExportService]
+    CS --> ORCH[OrchestratorService]
+    CS --> ENG[ConversationEngineService]
+    CS --> CSVC[ChangeSetService]
+
+    SH --> MS[MultiSheetService]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 11: Auth -->
+    <section id="auth">
+      <h2>11. Authentication Flow <span class="badge badge-not-found">Not Implemented</span></h2>
+      <p class="desc">No JWT, guards, or login endpoints exist in the codebase.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+sequenceDiagram
+    participant FE as Frontend
+    participant BE as Backend
+
+    Note over FE,BE: Auth flow NOT IMPLEMENTED
+    FE->>BE: POST /excel-ai/conversation (no Authorization header)
+    BE->>BE: ValidationPipe on DTO
+    BE-->>FE: SSE response
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 12: Database ER -->
+    <section id="database-er">
+      <h2>12. Database ER Diagram</h2>
+      <p class="desc">MongoDB collections: conversations, audit_logs, audit_entries, change_sets (changes[] include sourceRefs / exceptionFlags).</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+erDiagram
+    CONVERSATIONS {
+        string conversationId PK
+        array messages
+        object sheetSnapshot
+        string status
+        date expiresAt
+        date createdAt
+        date updatedAt
+    }
+
+    CHANGE_SETS {
+        string changeSetId PK
+        string conversationId FK
+        string traceId
+        string prompt
+        object beforeState
+        array changes
+        string status
+        date appliedAt
+        date revertedAt
+    }
+
+    CELL_CHANGE {
+        string cell
+        string sheet
+        string before
+        string after
+        string formula
+        boolean isHardcoded
+        array sourceRefs
+        array exceptionFlags
+    }
+
+    AUDIT_LOGS {
+        ObjectId _id PK
+        string traceId
+        date timestamp
+        string llmModel
+        string tier
+        string intent
+        int promptTokens
+        int completionTokens
+        int totalTokens
+        float estimatedCostUsd
+        int latencyMs
+        boolean success
+    }
+
+    AUDIT_ENTRIES {
+        ObjectId _id PK
+        string requestId
+        string processName
+        string action
+        string userId
+        float confidence
+    }
+
+    CONVERSATIONS ||--o{ CHANGE_SETS : conversationId
+    CHANGE_SETS ||--o{ CELL_CHANGE : changes
+    CONVERSATIONS ||--o{ AUDIT_LOGS : "same traceId logical only"
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 13: DFD Level 0 -->
+    <section id="dfd-l0">
+      <h2>13. Data Flow Diagram — Level 0</h2>
+      <p class="desc">Context diagram: User, Excel, Frontend, Backend, AI, Database.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    User((User))
+    Excel[(Excel Workbook)]
+    Frontend[React Add-in]
+    Backend[NestJS Backend]
+    AI[OpenRouter / OpenAI]
+    DB[(MongoDB)]
+
+    User -->|prompt| Frontend
+    Frontend <-->|Office.js read/write| Excel
+    Frontend -->|JSON + SSE| Backend
+    Backend -->|LLM requests| AI
+    AI -->|tokens/actions JSON| Backend
+    Backend -->|persist| DB
+    Backend -->|SSE events| Frontend
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 14: DFD Level 1 -->
+    <section id="dfd-l1">
+      <h2>14. Data Flow Diagram — Level 1</h2>
+      <p class="desc">Major processes: frontend capture/apply and backend route → tiers / SmartDataQuery / Plan / Ask.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TB
+    subgraph FrontendProcesses
+        P1[1.0 Capture Prompt + Mode]
+        P2[2.0 Read Workbook Context]
+        P3[3.0 Compress Payload]
+        P4[4.0 Stream SSE Handler]
+        P5[5.0 Preview/Apply + Citations]
+    end
+
+    subgraph BackendProcesses
+        P6[6.0 LlmRouter + Classifier]
+        P6a[6.1 SmartDataQuery]
+        P6b[6.2 FindExport]
+        P7[7.0 Write Tier Dispatch 0–3]
+        P8[8.0 Ask Stream / Plan Only]
+        P9[9.0 Audit + ChangeSet provenance]
+    end
+
+    User((User)) --> P1
+    P1 --> P2
+    P2 --> Excel[(Excel)]
+    P2 --> P3
+    P3 --> P6
+    P6 -->|data| P6a
+    P6 -->|export| P6b
+    P6 -->|write| P7
+    P6 -->|ask / plan| P8
+    P6a --> AI[(OpenRouter MEDIUM)]
+    P7 --> AI2[(OpenRouter LOW/MEDIUM/HIGH)]
+    P8 --> AI
+    P6a --> P4
+    P6b --> P4
+    P7 --> P4
+    P8 --> P4
+    P7 --> P9
+    P9 --> DB[(MongoDB)]
+    P4 --> P5
+    P5 --> Excel
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 15: DFD Level 2 -->
+    <section id="dfd-l2">
+      <h2>15. Data Flow Diagram — Level 2 (Write Tier Dispatch)</h2>
+      <p class="desc">Decomposition of backend process 7.0 — complexity tiers. Tier 3 keeps Planner→Executor→Verifier unchanged.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TB
+    IN[Classified Write Intent + complexity]
+    IN --> FLAG{ENABLE_COMPLEXITY_TIERING}
+    FLAG -->|off / shadow| T3
+    FLAG -->|tier01 / full| T{executable tier}
+    T -->|0| T0[7.0a Tier0Direct — no LLM]
+    T -->|1| T1[7.0b Tier1SingleAction — 1 LLM]
+    T -->|2| T2[7.0c Generate→Verify]
+    T -->|3| T3[7.1 Planner Agent]
+    T3 --> P7b{Clarifications?}
+    P7b -->|Yes| OUT1[SSE clarification]
+    P7b -->|No| P7c[7.2 Executor Loop]
+    P7c --> P7d[7.3 Virtual Apply]
+    P7d --> P7c
+    P7c --> P7e[7.4 Verifier Agent]
+    P7e --> P7f{Passed?}
+    P7f -->|No retries left| OUT2[Action array]
+    P7f -->|No| P7g[7.5 Scoped retry]
+    P7g --> P7c
+    P7f -->|Yes| OUT2
+    T0 --> OUT2
+    T1 --> OUT2
+    T2 --> OUT2
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 16: Module Dependencies -->
+    <section id="dependencies">
+      <h2>16. Full Dependency Graph</h2>
+      <p class="desc">Frontend and backend module dependencies.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+graph TD
+    AppModule --> AppConfigModule
+    AppModule --> DatabaseModule
+    AppModule --> AuditModule
+    AppModule --> DomainToolsModule
+    AppModule --> HealthModule
+    AppModule --> ExcelAiModule
+    AppModule --> SheetsModule
+
+    ExcelAiModule --> LlmModule
+    ExcelAiModule --> AgentsModule
+    ExcelAiModule --> FormulaModule
+    ExcelAiModule --> AuditModule
+
+    AgentsModule --> LlmModule
+    AgentsModule --> FormulaModule
+
+    ConversationService --> LlmRouter
+    ConversationService --> Tier0Direct
+    ConversationService --> Tier1SingleAction
+    ConversationService --> Tier2GenerateVerify
+    ConversationService --> Orchestrator
+    ConversationService --> ChangeSetService
+
+    Frontend_App[App.tsx] --> useConversation
+    useConversation --> actionEngine
+    actionEngine --> richActionEngine
+    actionEngine --> legacyConverter
+    richActionEngine --> worksheetHandler[worksheet.handler.ts]
+    actionEngine --> formatGuard
+    Frontend_App --> sheetContextBuilder
+    sheetContextBuilder --> workbookReader
+    ChangeHistoryPanel --> SourcePreview
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 17: Execution Trace -->
+    <section id="execution-trace">
+      <h2>17. Execution Trace — User Prompt to Excel Update</h2>
+      <p class="desc">Write request trace with tier dispatch, local routing, preview Accept/Reject, citations, and change set audit.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    S1["1. PanelInput onSend"] --> S2["2. App.handleSend + mode"]
+    S2 --> S3["3. buildWorkbookContext"]
+    S3 --> S4["4. tryLocalSheetActions?"]
+    S4 -->|local delete/create empty| S5L["5. dispatchLocalSheetActions"]
+    S5L --> S6L["6. shouldPreviewActions → previewManager"]
+    S4 -->|needs LLM| S5["5. POST /api/excel-ai/conversation"]
+    S5 --> S6["6. ConversationService"]
+    S6 --> S7["7. LlmRouter + classifyComplexity"]
+    S7 -->|plan mode| S7P["7p. streamPlanOnly → plan_only"]
+    S7 -->|write action| S8["8. handleWriteRoute + flag"]
+    S8 -->|tier 0–2| S9F["9. Tier0 / Tier1 / Tier2"]
+    S8 -->|tier 3| S9["9. streamWithOrchestrator"]
+    S9 --> S10["10. Planner → Executor → Verifier"]
+    S9F --> S11["11. ChangeSet + sourceRefs"]
+    S10 --> S11
+    S11 --> S12["12. SSE answer + actions + changes"]
+    S12 --> S13["13. processStream"]
+    S13 --> S14["14. previewManager + SourcePreview"]
+    S14 --> S15["15. User Accept"]
+    S15 --> S16["16. apply deferred + markApplied"]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 18: Local Sheet Routing -->
+    <section id="local-routing">
+      <h2>18. Local Sheet Actions — No LLM Routing</h2>
+      <p class="desc">Frontend intercepts simple sheet operations before any backend call. Data generation always goes to LLM.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    MSG[User message in action mode] --> DEL{detectDeleteSheetIntent?}
+    DEL -->|Yes| LOCAL_DEL[buildDeleteSheetActions]
+    DEL -->|No| CREATE{detectEmptySheetCreateIntent?}
+    CREATE -->|Yes| LOCAL_ADD[buildCreateEmptySheetActions]
+    CREATE -->|No| DATA{detectSheetDataGenerationIntent?}
+    DATA -->|Yes dummy/gst/copy/sort| BACKEND[POST conversation → write tiers]
+    DATA -->|No other prompts| BACKEND
+    LOCAL_DEL --> PREVIEW[previewManager + Accept/Reject]
+    LOCAL_ADD --> PREVIEW
+    PREVIEW --> DEFER[DELETE_SHEET deferred until Accept]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 19: Preview Pipeline -->
+    <section id="preview-pipeline">
+      <h2>19. Preview &amp; Accept/Reject Pipeline</h2>
+      <p class="desc">Structural + early cell writes apply on preview; Accept retries anything missed (SORT). Hard-deferred DELETE_SHEET only. Reject skips SORT cell-diff undo.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    ACT[Actions from local or SSE] --> PART[partitionPreviewActions]
+    PART --> STR[Structural: SORT_RANGE ADD_SHEET WRITE_TABLE…]
+    PART --> EARLY[Early deferred: SET_CELL FORMAT…]
+    PART --> HARD[Hard deferred: DELETE_SHEET]
+    STR --> APPLY_NOW[ActionEngine on preview start]
+    EARLY --> APPLY_NOW
+    HARD --> WAIT[Held until Accept]
+    APPLY_NOW --> BAR[PreviewSummaryBar + action card]
+    WAIT --> BAR
+    FAIL{Preview apply failed?}
+    APPLY_NOW --> FAIL
+    FAIL -->|Yes| RETRY[Accept still applies structural]
+    FAIL -->|No| MARK[structuralApplied true]
+    TIMELINE[Steps → thinking → AnswerReveal] --> READY{isTurnPresentationComplete?}
+    BAR --> READY
+    READY -->|No| PENDING[Review shortly…]
+    READY -->|Yes| BTNS[Accept + Reject enabled]
+    BTNS --> ACC{User choice}
+    ACC -->|Accept| ACC_DEF[Apply unapplied + hard-deferred + audit]
+    ACC -->|Reject| REV[buildPreviewRejectActions]
+    REV --> NOSORT[Skip cell-diff undo if SORT_RANGE]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 19a: Action Normalize Contract -->
+    <section id="action-normalize">
+      <h2>19a. Executor Normalize → Sanitize Contract</h2>
+      <p class="desc">FORMAT_RANGE may arrive as A1 <code>range</code>; normalize expands to indices before sanitize. Spec: 10_critical_bugfixes.md Bug 4.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    EXE[Executor JSON] --> NORM[normalizeExecutorOutput]
+    NORM -->|range A1:L1| EXP[parseA1Range → row/col/span]
+    NORM -->|already has row/col| KEEP[leave as-is]
+    EXP --> SAN[sanitizeAction requires integer row/col]
+    KEEP --> SAN
+    SAN -->|valid| SSE[SSE actions]
+    SAN -->|null| DROP[filtered out — empty actions]
+    DROP --> Q[question: could not produce valid actions]
+    SSE --> XL[Excel preview / Accept]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 19b: Citations -->
+    <section id="citations">
+      <h2>19b. Citation &amp; Provenance</h2>
+      <p class="desc">CellChange.sourceRefs / exceptionFlags from Tier 2–3 (and future domain tools). Workbook refs jump via Office.js select.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    T2[Tier2 / Tier3 actions] --> PREV[formula precedents]
+    PREV --> CS[ChangeSet.createPreview provenance]
+    CS --> CH[changes[].sourceRefs]
+    CH --> UI[ChangeHistoryPanel citation badge]
+    UI --> SP[SourcePreview]
+    SP -->|workbook| JUMP[jumpToWorkbookSource Excel.run select]
+    SP -->|gstr2b / 26as / …| EXT[External viewer — future]
+    CH --> FLAG{exceptionFlags?}
+    FLAG -->|Yes| AMBER[Amber exception chip]
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 20: Backend Shortcut Router -->
+    <section id="shortcut-router">
+      <h2>20. Backend Shortcut Router — Layout Commands (No LLM)</h2>
+      <p class="desc">After LlmRouter returns route=shortcut: deterministic layout actions. Instant regex covers freeze/protect/zoom; other shortcuts may be LLM-routed then handled here. File: excel-ai/utils/shortcut-router.util.ts</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    MSG[User message] --> LR[LlmRouterService]
+    LR -->|route=shortcut| CS[handleRouterShortcut]
+    CS --> SR{routeShortcutAction}
+    SR -->|freeze top row| FP[FREEZE_PANES freezeRows:1]
+    SR -->|unfreeze| UF[UNFREEZE_PANES]
+    SR -->|hide row 12| HR[HIDE_ROW row:11]
+    SR -->|unhide column D| HC[UNHIDE_COLUMN col:3]
+    SR -->|zoom to 150%| ZM[SET_ZOOM zoomPercent:150]
+    SR -->|protect this sheet| PS[PROTECT_SHEET]
+    SR -->|no match| LLM[Fallback streamWithOrchestrator]
+    FP --> EMIT[SSE actions — instant]
+    UF --> EMIT
+    HR --> EMIT
+    HC --> EMIT
+    ZM --> EMIT
+    PS --> EMIT
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 21: Unified Action Engine -->
+    <section id="unified-engine">
+      <h2>21. Unified Action Engine (June 2026)</h2>
+      <p class="desc">Single execution path. All SheetAction types convert to RichAction via legacyConverter before Office.js apply. Legacy dual-engine fallback removed.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    IN[SheetAction array] --> GUARD[sanitizeActions]
+    GUARD --> PART[partitionActions]
+    PART --> CONV[legacyConverter.convertLegacyToRich]
+    CONV --> RICH[RichAction array]
+    RICH --> RAE[RichActionEngine.dispatch]
+    RAE --> H1[cell.handler]
+    RAE --> H2[rowCol.handler]
+    RAE --> H3[sheet.handler]
+    RAE --> H4[worksheet.handler]
+    RAE --> H5[sort.handler]
+    H1 --> XL[Excel.run]
+    H2 --> XL
+    H3 --> XL
+    H4 --> XL
+    H5 --> XL
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 22: Agent Structured Logging -->
+    <section id="agent-logging">
+      <h2>22. Agent Structured Logging</h2>
+      <p class="desc">Every Planner/Executor/Verifier LLM call logged with correlationId. Write paths also emit <code>tier_decision</code>. File: agents/logging/structured-logger.ts</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+sequenceDiagram
+    participant HTTP as HTTP traceId header
+    participant CS as ConversationService
+    participant OR as OrchestratorService
+    participant PA as PlannerAgent
+    participant EA as ExecutorAgent
+    participant VE as VerifierAgent
+    participant SL as StructuredLogger
+    participant LLM as OpenRouter
+
+    HTTP->>CS: traceId
+    CS->>SL: tier_decision classifiedTier tieringMode shadowed
+    CS->>OR: correlationId = traceId
+    OR->>PA: plan(..., correlationId)
+    PA->>LLM: complete()
+    LLM-->>PA: raw JSON
+    PA->>SL: debug rawResponse
+    PA->>SL: agent_call success/failure
+    OR->>EA: execute(..., correlationId)
+    EA->>LLM: complete()
+    EA->>SL: agent_call + parse failure warn if needed
+    OR->>VE: verify(..., correlationId)
+    VE->>LLM: complete()
+    VE->>SL: agent_call
+    Note over SL: Warn if durationMs > 15000
+    Note over SL: Redact API keys before persist
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 22b: Ops Logging -->
+    <section id="ops-logging">
+      <h2>22b. Dual Ops Logging — Files + Mongo TTL</h2>
+      <p class="desc">HTTP and planner NDJSON files (24h prune) mirrored to Mongo collections with 3-day TTL. Dashboard reads Mongo.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart LR
+    HTTP[POST /excel-ai/conversation] --> CAP[RequestResponseCapture]
+    CAP --> RFL[RequestFileLogger → logs/requests.log]
+    PLAN[PlannerAgent] --> PFL[PlannerFileLogger → logs/planner.log]
+    RFL --> MONGO_R[(request_logs)]
+    PFL --> MONGO_P[(planner_logs)]
+    TTL[LogTtlIndexService 3d] --> MONGO_R
+    TTL --> MONGO_P
+    PRUNE[24h file prune] --> RFL
+    PRUNE --> PFL
+    MONGO_R --> DASH[Dashboard :3100]
+    MONGO_P --> DASH
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 22c: Dashboard -->
+    <section id="dashboard">
+      <h2>22c. Ops Dashboard</h2>
+      <p class="desc">Next.js app under <code>Dashboard/</code> — not the Excel UI. Overview metrics, /requests, /planner detail pages, optional file import.</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TB
+    subgraph Dash["Dashboard :3100"]
+        HOME[Overview counts / latency]
+        REQ[/requests list + detail]
+        PL[/planner list + detail]
+        API[Next API routes]
+        IMP[import-logs.ts]
+    end
+    FILES[cellix_backend/logs/*.log] --> IMP
+    IMP --> MONGO[(request_logs / planner_logs)]
+    MONGO --> API
+    API --> HOME
+    API --> REQ
+    API --> PL
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 23: Preview Accept/Reject Gating -->
+    <section id="preview-gating">
+      <h2>23. Accept/Reject Gating After Reveal</h2>
+      <p class="desc">SSE actions can arrive early; buttons wait for visual presentation. Files: turnPresentation.ts, ConversationPanel.tsx, PreviewSummaryBar.tsx</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+sequenceDiagram
+    participant SSE as SSE stream
+    participant UC as useConversation
+    participant PM as previewManager
+    participant CP as ConversationPanel
+    participant PSB as PreviewSummaryBar
+    participant AR as AnswerReveal
+
+    SSE->>UC: actions event
+    UC->>PM: render / highlightChanges
+    UC->>CP: hasPendingPreview true
+    CP->>PSB: show bar showActions=false
+    Note over PSB: Review shortly…
+    UC->>UC: steps + thinking timeline
+    UC->>AR: answer revealState typing
+    AR->>UC: markAnswerComplete
+    UC->>CP: isTurnPresentationComplete true
+    CP->>PSB: showActions=true
+    Note over PSB: Accept + Reject visible
+        </pre>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Cellix-2026 Architecture Diagrams · Updated July 16, 2026 · Tiering · Modes · Citations · Mermaid.js v10
+  </footer>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#1e3a5f',
+        primaryTextColor: '#e7ecf3',
+        primaryBorderColor: '#3b82f6',
+        lineColor: '#8b9cb3',
+        secondaryColor: '#1a2332',
+        tertiaryColor: '#0f1419',
+        background: '#1a2332',
+        mainBkg: '#1a2332',
+        nodeBorder: '#2d3a4f',
+        clusterBkg: '#0f1419',
+        titleColor: '#e7ecf3',
+        edgeLabelBackground: '#1a2332',
+        actorBkg: '#1e3a5f',
+        actorBorder: '#3b82f6',
+        actorTextColor: '#e7ecf3',
+        signalColor: '#8b9cb3',
+        signalTextColor: '#e7ecf3',
+        labelBoxBkgColor: '#1a2332',
+        labelBoxBorderColor: '#2d3a4f',
+        labelTextColor: '#e7ecf3',
+        loopTextColor: '#e7ecf3',
+        noteBkgColor: '#7f1d1d',
+        noteTextColor: '#fecaca',
+        noteBorderColor: '#991b1b',
+        activationBkgColor: '#1e3a5f',
+        activationBorderColor: '#3b82f6',
+        sequenceNumberColor: '#e7ecf3',
+      },
+      flowchart: { curve: 'basis', htmlLabels: true },
+      sequence: { mirrorActors: false, wrap: true },
+    });
+  </script>
+</body>
+</html>
