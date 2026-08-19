@@ -141,7 +141,7 @@
 <body>
   <header>
     <h1>Cellix Architecture — Flow Diagrams</h1>
-    <p>Cellix-2026 codebase · Updated July 18, 2026 · Tiering 0–3 · Ask/Plan/Act · Dashboard ops UI · FORMAT normalize · SORT Accept · <a href="CELLIX_TECHNICAL_DOCUMENTATION.md" style="color:#3b82f6">Full technical doc</a> · Mermaid.js</p>
+    <p>Cellix-2026 codebase · Updated July 28, 2026 · Overwrite guard + INSERT_COLUMN · Spec 15 user-facing copy · Tiering 0–3 · Accept re-checks guard · <a href="CELLIX_TECHNICAL_DOCUMENTATION.md" style="color:#3b82f6">Full technical doc</a> · Mermaid.js</p>
   </header>
 
   <nav>
@@ -174,6 +174,8 @@
     <a href="#citations">Citations</a>
     <a href="#shortcut-router">Shortcut Router</a>
     <a href="#unified-engine">Unified Action Engine</a>
+    <a href="#overwrite-guard">Overwrite Guard</a>
+    <a href="#user-facing">User-Facing Copy</a>
     <a href="#agent-logging">Agent Logging</a>
     <a href="#ops-logging">Ops Logging</a>
     <a href="#dashboard">Dashboard</a>
@@ -185,7 +187,7 @@
     <!-- SECTION 1: User Journey -->
     <section id="user-journey">
       <h2>1. User Journey</h2>
-      <p class="desc">End-to-end flow: local shortcuts, five-route LLM router, complexity tiers, Ask/Plan/Act modes, Accept/Reject preview.</p>
+      <p class="desc">End-to-end flow: local shortcuts, five-route LLM router, complexity tiers, Ask/Plan/Act modes, Accept/Reject preview. Accept always re-runs the overwrite guard before Office.js writes.</p>
       <div class="diagram-card">
         <pre class="mermaid">
 flowchart LR
@@ -204,7 +206,7 @@ flowchart LR
     J -->|write + Plan| N1[streamPlanOnly → plan_only]
     J -->|write + Act| N2[handleWriteRoute tiers 0–3]
     J -->|ask| O[streamWithOpenAi]
-    K --> P[SSE actions]
+    K --> P[SSE actions + userFacingSummary]
     L --> Q[SSE answer]
     M --> P
     N1 --> R1[Plan card — Run as Action]
@@ -214,7 +216,9 @@ flowchart LR
     R -->|Yes| I
     R -->|No| S[ActionEngine.apply]
     I -->|Accept| S
-    S --> U[Excel]
+    S --> G1{guardAgainstOverwrite}
+    G1 -->|occupied| BLOCK[OverwriteGuardError — no write]
+    G1 -->|empty or confirmed| U[Excel]
         </pre>
       </div>
     </section>
@@ -234,7 +238,9 @@ flowchart TB
         TP[Task Pane + Mode]
         WR[workbookReader]
         AE[ActionEngine]
+        OG[overwriteGuard]
         PM[previewManager]
+        ARC[ActionResponseCard]
         SP[SourcePreview]
     end
 
@@ -314,6 +320,7 @@ graph TB
     subgraph UI
         CP[ConversationPanel]
         TR[TurnRenderer]
+        ARC[ActionResponseCard]
         SS[SheetSelector]
         SCV[SheetCompareView]
         CLP[ClarificationPanel]
@@ -327,6 +334,7 @@ graph TB
         LSA[localSheetActions]
         PP[previewPolicy]
         PR[previewRevert]
+        UFR[userFacingResponse]
     end
 
     subgraph Services
@@ -339,8 +347,10 @@ graph TB
         AE[ActionEngine facade]
         LC[legacyConverter]
         RAE[RichActionEngine]
+        OG[overwriteGuard]
         AN[actionNormalizer]
         WH[worksheet.handler]
+        RCH[rowCol.handler INSERT_COLUMN]
     end
 
     subgraph ContextPipeline
@@ -361,6 +371,8 @@ graph TB
     App --> UC
     App --> CP
     CP --> TR
+    TR --> ARC
+    ARC --> UFR
     CP --> SS
     CP --> SCV
     CP --> CLP
@@ -370,6 +382,7 @@ graph TB
     CP --> DPP
     UC --> LSA
     UC --> PP
+    UC --> UFR
     PM --> PR
     App --> PP
     UC --> AC
@@ -383,7 +396,10 @@ graph TB
     AE --> AN
     AN --> LC
     LC --> RAE
-    RAE --> WH
+    RAE --> OG
+    OG -->|pass| WH
+    OG -->|pass| RCH
+    OG -->|block| ERR[OverwriteGuardError]
     AE --> FG
     WR --> ExcelAPI[(Excel API)]
     PM --> ExcelAPI
@@ -396,7 +412,7 @@ graph TB
     <!-- SECTION 4: Frontend Flow -->
     <section id="frontend-flow">
       <h2>4. Frontend Execution Flow</h2>
-      <p class="desc">Boot → read workbook → local routing or API → SSE → preview/apply (no cell highlighting).</p>
+      <p class="desc">Boot → read workbook → local routing or API → SSE → preview → Accept → overwrite guard → Office.js apply.</p>
       <div class="diagram-card">
         <pre class="mermaid">
 flowchart TD
@@ -412,13 +428,15 @@ flowchart TD
     J --> K[fetch POST /api/excel-ai/conversation]
     K --> L[processStream SSE]
     L --> I
-    I -->|Yes| M[previewManager.render or highlightChanges]
-    M --> N[DiffPreviewPanel / PreviewSummaryBar / ChangeHistoryPanel]
+    I -->|Yes| M[previewManager — structural only; cell writes deferred]
+    M --> N[ActionResponseCard / PreviewSummaryBar]
     N --> O[User Accept]
     O --> P[ActionEngine.applyActions]
     I -->|No| P
-    P --> Q[RichActionEngine unified handlers]
-    Q --> R[Excel.run context.sync]
+    P --> Q[RichActionEngine.dispatch]
+    Q --> G1{guardAgainstOverwrite}
+    G1 -->|occupied| BLOCK[OverwriteGuardError — Excel unchanged]
+    G1 -->|ok| R[handlers → Excel.run context.sync]
         </pre>
       </div>
     </section>
@@ -1085,31 +1103,32 @@ flowchart TD
     <!-- SECTION 19: Preview Pipeline -->
     <section id="preview-pipeline">
       <h2>19. Preview &amp; Accept/Reject Pipeline</h2>
-      <p class="desc">Structural + early cell writes apply on preview; Accept retries anything missed (SORT). Hard-deferred DELETE_SHEET only. Reject skips SORT cell-diff undo.</p>
+      <p class="desc">Soft structural sheet ops may apply on preview; cell writes / INSERT_COLUMN / SORT_RANGE / DELETE_SHEET stay deferred until Accept. Accept re-runs ActionEngine → overwrite guard. Reject skips SORT cell-diff undo.</p>
       <div class="diagram-card">
         <pre class="mermaid">
 flowchart TD
     ACT[Actions from local or SSE] --> PART[partitionPreviewActions]
-    PART --> STR[Structural: SORT_RANGE ADD_SHEET WRITE_TABLE…]
-    PART --> EARLY[Early deferred: SET_CELL FORMAT…]
-    PART --> HARD[Hard deferred: DELETE_SHEET]
+    PART --> STR[Soft structural: ADD_SHEET CREATE_SHEET…]
+    PART --> DEFER[Deferred: SET_CELL SET_FORMULA INSERT_COLUMN SORT_RANGE DELETE_SHEET…]
     STR --> APPLY_NOW[ActionEngine on preview start]
-    EARLY --> APPLY_NOW
-    HARD --> WAIT[Held until Accept]
-    APPLY_NOW --> BAR[PreviewSummaryBar + action card]
+    DEFER --> WAIT[Held until Accept]
+    APPLY_NOW --> BAR[ActionResponseCard + PreviewSummaryBar]
     WAIT --> BAR
     FAIL{Preview apply failed?}
     APPLY_NOW --> FAIL
-    FAIL -->|Yes| RETRY[Accept still applies structural]
+    FAIL -->|Yes| RETRY[Accept still applies unapplied]
     FAIL -->|No| MARK[structuralApplied true]
     TIMELINE[Steps → thinking → AnswerReveal] --> READY{isTurnPresentationComplete?}
     BAR --> READY
     READY -->|No| PENDING[Review shortly…]
     READY -->|Yes| BTNS[Accept + Reject enabled]
     BTNS --> ACC{User choice}
-    ACC -->|Accept| ACC_DEF[Apply unapplied + hard-deferred + audit]
+    ACC -->|Accept| ACC_DEF[ActionEngine → guardAgainstOverwrite → handlers + audit]
     ACC -->|Reject| REV[buildPreviewRejectActions]
     REV --> NOSORT[Skip cell-diff undo if SORT_RANGE]
+    ACC_DEF --> GCHK{Occupied target?}
+    GCHK -->|Yes| BLOCK[OverwriteGuardError — no Excel write]
+    GCHK -->|No| XL[Excel updated]
         </pre>
       </div>
     </section>
@@ -1184,7 +1203,7 @@ flowchart TD
     <!-- SECTION 21: Unified Action Engine -->
     <section id="unified-engine">
       <h2>21. Unified Action Engine (June 2026)</h2>
-      <p class="desc">Single execution path. All SheetAction types convert to RichAction via legacyConverter before Office.js apply. Legacy dual-engine fallback removed.</p>
+      <p class="desc">Single execution path. All SheetAction types convert to RichAction, then <code>guardAgainstOverwrite</code> runs before any handler write (including Accept). Spec 14.</p>
       <div class="diagram-card">
         <pre class="mermaid">
 flowchart LR
@@ -1193,16 +1212,75 @@ flowchart LR
     PART --> CONV[legacyConverter.convertLegacyToRich]
     CONV --> RICH[RichAction array]
     RICH --> RAE[RichActionEngine.dispatch]
-    RAE --> H1[cell.handler]
-    RAE --> H2[rowCol.handler]
-    RAE --> H3[sheet.handler]
-    RAE --> H4[worksheet.handler]
-    RAE --> H5[sort.handler]
+    RAE --> OG[guardAgainstOverwrite]
+    OG -->|block| ERR[OverwriteGuardError]
+    OG -->|pass| H1[cell.handler]
+    OG -->|pass| H2[rowCol.handler INSERT_COLUMN]
+    OG -->|pass| H3[sheet.handler]
+    OG -->|pass| H4[worksheet.handler]
+    OG -->|pass| H5[sort / range / aggregate / chart]
     H1 --> XL[Excel.run]
     H2 --> XL
     H3 --> XL
     H4 --> XL
     H5 --> XL
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 21a: Overwrite Guard + INSERT_COLUMN -->
+    <section id="overwrite-guard">
+      <h2>21a. Overwrite Guard &amp; Semantic INSERT_COLUMN (spec 14)</h2>
+      <p class="desc">Last line of defense against silent data loss. Accept does not bypass the guard. “Add a column” must use semantic INSERT_COLUMN resolved from the live used range — never SET_FORMULA into a guessed column (e.g. K / Payment Status).</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TD
+    REQ["Add column Net of Tax = Total − Tax"] --> EXE[Executor]
+    EXE --> CHOICE{Action type}
+    CHOICE -->|preferred| IC["INSERT_COLUMN columnName + afterLastColumn + formula"]
+    CHOICE -->|legacy bug| SF["SET_FORMULA row/col → K2"]
+    IC --> ACC[Accept]
+    SF --> ACC
+    ACC --> OG[guardAgainstOverwrite]
+    OG -->|K2 has Paid| BLOCK["OverwriteGuardError — Excel unchanged"]
+    BLOCK --> HINT["Hint: use INSERT_COLUMN afterLastColumn"]
+    OG -->|empty target / INSERT_COLUMN| LIVE[handleSemanticInsertColumn]
+    LIVE --> USED[getUsedRange live]
+    USED --> COL[Next empty col e.g. M]
+    COL --> WRITE[Header + formula rows]
+    WRITE --> OK[Payment Status K untouched]
+
+    subgraph Gaps["Known gaps"]
+      V[Verifier may hallucinate duplicate Net of Tax]
+      R[Retry uses verifier feedback — not guard text]
+      P[partialProgress can still queue bad SET_FORMULA for Accept]
+    end
+        </pre>
+      </div>
+    </section>
+
+    <!-- SECTION 21b: User-facing response structure -->
+    <section id="user-facing">
+      <h2>21b. User-Facing vs Internal Copy (spec 15)</h2>
+      <p class="desc">Default action card shows plain-English <code>userFacingSummary</code>. Tier / model / raw action strings live under expandable <code>internalDetails</code>. Files: userFacingResponse.ts, ActionResponseCard.tsx</p>
+      <div class="diagram-card">
+        <pre class="mermaid">
+flowchart TB
+    SSE[SSE actions event] --> UFS[userFacingSummary]
+    SSE --> INT[internalDetails]
+    SSE --> ACTS[actions + changes]
+    UFS --> CARD[ActionResponseCard default view]
+    ACTS --> CARD
+    CARD --> CTX[contextLine]
+    CARD --> HEAD[headline — plain English]
+    CARD --> BUL[optional bullets]
+    CARD --> SUP[supportingDetail from ChangeSet]
+    CARD --> BTN[Accept / Reject]
+    INT --> TOGGLE[Show details — opt-in]
+    TOGGLE --> TIER[tier / model / processingLabel]
+    TOGGLE --> RAW[rawActionSummary / legacyExplanation]
+
+    BAD[Verifier failure text in headline] -.->|can contradict| GUARDMSG[Accurate guard message]
         </pre>
       </div>
     </section>
@@ -1314,6 +1392,7 @@ sequenceDiagram
     UC->>CP: isTurnPresentationComplete true
     CP->>PSB: showActions=true
     Note over PSB: Accept + Reject visible
+    Note over CP: ActionResponseCard shows userFacingSummary; internals behind Show details
         </pre>
       </div>
     </section>
@@ -1321,7 +1400,7 @@ sequenceDiagram
   </main>
 
   <footer>
-    Cellix-2026 Architecture Diagrams · Updated July 16, 2026 · Tiering · Modes · Citations · Mermaid.js v10
+    Cellix-2026 Architecture Diagrams · Updated July 28, 2026 · Overwrite guard · INSERT_COLUMN · Spec 15 copy · Mermaid.js v10
   </footer>
 
   <script>

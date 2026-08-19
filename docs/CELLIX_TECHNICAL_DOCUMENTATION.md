@@ -1,7 +1,7 @@
 # Cellix — Full Technical Documentation
 
 **Version:** Cellix-2026  
-**Last updated:** July 18, 2026 (Dashboard ops UI, dual request/planner logging + Mongo TTL, FORMAT_RANGE A1→indices normalize, SORT preview/Accept apply fix, sparse virtual-sort no-op; specs `00`–`10`)  
+**Last updated:** July 28, 2026 (Overwrite guard + semantic `INSERT_COLUMN` / Accept re-check, user-facing summary vs internal details, Tier 2/3 retry gaps; specs `00`–`18`)  
 **Audience:** Engineers working on the Excel add-in, NestJS backend, Dashboard, or agent pipeline
 
 ---
@@ -56,6 +56,8 @@ Key characteristics:
 - **TOON compression** reduces token payload size for large sheet context sent to the LLM.
 - **Scoped verifier retry** re-executes only failed subtasks (max 2 attempts), not the full pipeline.
 - **Unified action engine** converts all SheetAction types through RichActionEngine before Office.js apply.
+- **Overwrite guard (spec 14)** — `guardAgainstOverwrite` runs on every value-writing RichAction before Office.js write (including Accept). Occupied cells without `explicitOverwriteConfirmed` throw `OverwriteGuardError` and never write. “Add a column” must use semantic `INSERT_COLUMN` (`columnName` + `afterLastColumn` / `{ afterColumn }`), resolved from the live used range — never `SET_FORMULA` into a guessed column index.
+- **User-facing response structure (spec 15)** — default action-card copy uses `userFacingSummary` (plain-English); tier/model/raw action strings live under expandable `internalDetails` (“Show details”).
 - **Deferred Accept/Reject** — preview bar may appear early, but Accept/Reject buttons only after thinking + answer typing complete.
 - **Smart LLM data queries** — `route=data` goes to `SmartDataQueryService`: column-sliced sheet data + MEDIUM-tier LLM (`reasoning.effort=low`).
 - **Find / lookup pointers** — find/lookup answers emit `matches` + `select_cell`; the add-in selects the first hit via `navigateToCell` and shows clickable cell refs.
@@ -80,12 +82,14 @@ Cellix-2026/
 │   │   ├── components/       # ConversationPanel, SourcePreview, ChangeHistoryPanel, …
 │   │   ├── hooks/            # useConversation (SSE, plan_only, select_cell → navigateToCell)
 │   │   ├── services/         # previewManager (SORT Accept fallback), sheetContextBuilder, …
-│   │   ├── engine/           # Unified RichActionEngine + handlers (sort.handler, format.handler)
-│   │   ├── utils/            # previewRevert, actionPreviewCopy, chatSessionStorage, …
+│   │   ├── engine/           # RichActionEngine, overwriteGuard, handlers (rowCol INSERT_COLUMN, …)
+│   │   ├── utils/            # previewRevert, userFacingResponse, actionPreviewCopy, chatSessionStorage, …
 │   │   ├── context/          # workbookReader, TOON compression
 │   │   ├── styles/           # conversation-panel.css
 │   │   └── types/            # mode, changeSet (sourceRefs), conversationTurn
 │   └── vite.config.ts
+│
+├── shared/                   # Shared RichAction types (`action.types.ts` — INSERT_COLUMN semantic shape)
 │
 ├── cellix_backend/           # NestJS + Fastify API
 │   ├── src/
@@ -95,7 +99,7 @@ Cellix-2026/
 │   │   │   └── prompts/      # router, tier1, cellix-system-prompt
 │   │   ├── agents/           # Orchestrator, Planner, Executor, Verifier, StructuredLogger
 │   │   │   ├── utils/        # normalize-executor-output (A1→indices), range-merge, sort-action
-│   │   │   └── prompts/      # executor.prompt (FORMAT_RANGE + SORT_RANGE schemas)
+│   │   │   └── prompts/      # executor.prompt (INSERT_COLUMN + FORMAT_RANGE + SORT_RANGE)
 │   │   ├── domain-tools/     # GST/TDS/recon/accounting stubs + registry (scaffolding)
 │   │   ├── audit/            # ChangeSet + provenance (sourceRefs / exceptionFlags)
 │   │   ├── common/logging/   # pino + request/planner file loggers + Mongo TTL indexes
@@ -110,9 +114,12 @@ Cellix-2026/
 │   ├── src/app/              # Overview, /requests, /planner + API routes
 │   └── scripts/import-logs.ts
 │
-├── specs/                    # Pipeline upgrade specs 00–10
+├── specs/                    # Pipeline upgrade specs 00–18
 │   ├── 00_OVERVIEW.md … 09_context_pipeline_optimization.md
-│   └── 10_critical_bugfixes.md   # FORMAT sanitize drop, SORT false-applied, …
+│   ├── 10_critical_bugfixes.md … 13 (native range / aggregate / charts)
+│   ├── 14_critical_data_loss_column_overwrite.md  # overwrite guard + INSERT_COLUMN
+│   ├── 15_user_facing_response_structure.md       # default vs internal copy
+│   └── 16–18 … planner exhaustion, verifier truncation, Tier 2 retry
 │
 └── docs/                     # This file, architecture diagrams, rollout guide
 ```
@@ -240,6 +247,8 @@ flowchart TB
         UC[useConversation]
         PM[previewManager]
         AE[ActionEngine]
+        OG[overwriteGuard]
+        ARC[ActionResponseCard]
         WR[workbookReader]
     end
 
@@ -272,6 +281,9 @@ flowchart TB
     WB <-->|Office.js| AE
     TP --> UC
     UC --> PM
+    UC --> ARC
+    AE --> OG
+    OG -->|block| ERR[OverwriteGuardError]
     UC -->|POST SSE| CS
     CS --> LR
     LR --> CC
@@ -301,7 +313,7 @@ flowchart TB
     CSVC --> MONGO
 ```
 
-**Design principle:** AI agents produce **plans** (JSON actions). The frontend **never** trusts raw LLM text for writes — only parsed `SheetAction[]` applied through `ActionEngine`. Read-only data questions use column-sliced MEDIUM LLM answers, not formula suggestions.
+**Design principle:** AI agents produce **plans** (JSON actions). The frontend **never** trusts raw LLM text for writes — only parsed `SheetAction[]` applied through `ActionEngine`, with `guardAgainstOverwrite` before every Office.js value write (including Accept). Read-only data questions use column-sliced MEDIUM LLM answers, not formula suggestions. Default UI copy is `userFacingSummary`; internals stay behind “Show details”.
 
 ---
 
@@ -340,9 +352,9 @@ Central conversation orchestrator:
 Manages Accept/Reject lifecycle:
 
 - **`render(actions)` / `highlightChanges(changes, actions)`** — structural preview + diff metadata; marks preview active **before** Office.js apply so Accept can retry if apply fails
-- **Structural on preview start** — sheet/row/col structure, `WRITE_TABLE`, … (not `SORT_RANGE`)
-- **Hard-deferred until Accept** — `SORT_RANGE`, `DELETE_SHEET`
-- **`accept()`** — applies anything **not** yet applied (structural + early cell writes if preview failed/skipped) plus hard-deferred types
+- **Structural on preview start** — soft sheet creates only (`STRUCTURAL_PREVIEW_ACTION_TYPES`); **not** `INSERT_COLUMN` / row inserts / cell writes
+- **Hard-deferred until Accept** — `SORT_RANGE`, `DELETE_SHEET`, and other deferred write types (cell `SET_*` / formulas stay deferred until Accept)
+- **`accept()`** — applies anything **not** yet applied via `ActionEngine.applyActions` → RichActionEngine → **`guardAgainstOverwrite` again** (Accept does not bypass the overwrite guard)
 - **`reject()`** — runs `buildPreviewRejectActions` to undo structural creates / cell diffs that were applied in preview; hard-deferred actions need no undo (never applied)
 
 `App.tsx` sets `hasPendingPreview` **before** Office.js preview so Accept/Reject remain available if the first apply throws.
@@ -396,11 +408,13 @@ Sheet mutations **always** require Accept, even when Preview toggle is off.
 
 | Bucket | Applied when | Types |
 |--------|--------------|-------|
-| Structural | Preview start (Accept retries if missed) | `ADD_SHEET`, `WRITE_TABLE`, `ADD_ROW`, `CREATE_TABLE`, … |
-| Early deferred | Preview start with structural | Cell writes (`SET_CELL`, `FORMAT_RANGE`, …) |
-| Hard deferred | Accept only | `SORT_RANGE`, `DELETE_SHEET` |
+| Structural | Preview start (Accept retries if missed) | Soft sheet ops only (`ADD_SHEET` / `CREATE_SHEET` / rename family in `STRUCTURAL_PREVIEW_ACTION_TYPES`) — **not** `INSERT_COLUMN` |
+| Early deferred | Preview start with structural (when applicable) | Some cell-adjacent types; value writes are typically deferred |
+| Hard deferred | Accept only | `SORT_RANGE`, `DELETE_SHEET`, and other `DEFERRED_PREVIEW_ACTION_TYPES` |
 
 **SORT_RANGE:** Deferred until Accept so Reject leaves the workbook unchanged. Sparse virtual ChangeSet diffs must not be used to simulate a sort undo (they can clear/scramble rows).
+
+**Cell writes / formulas:** Deferred until Accept. Preview may show diffs from ChangeSet `before`/`after` without writing to Excel. Accept re-runs the full apply path including the overwrite guard.
 
 Reject otherwise inverts structural creates (e.g. created sheet → `DELETE_SHEET`).
 
@@ -433,28 +447,61 @@ All sheet mutations flow through a **single execution path**. The legacy dual-en
 SheetAction[] → utils/actionEngine.ts (facade)
   → actionNormalizer.partitionActions
   → legacyConverter.convertLegacyToRich (row/col → address-based RichAction)
-  → engine/actionEngine.ts → handlers/*.handler.ts → Excel.run
+  → engine/actionEngine.ts
+       → guardAgainstOverwrite(action)   # last line of defense (spec 14)
+       → handlers/*.handler.ts → Excel.run
 ```
 
 | Component | Path | Role |
 |-----------|------|------|
-| Facade | `utils/actionEngine.ts` | Entry point; sanitizes + delegates |
-| Normalizer | `engine/actionNormalizer.ts` | Converts all SheetAction → RichAction |
+| Facade | `utils/actionEngine.ts` | Entry point; sanitizes + delegates; rethrows `OverwriteGuardError` |
+| Normalizer | `engine/actionNormalizer.ts` | Converts all SheetAction → RichAction (incl. semantic `INSERT_COLUMN`) |
 | Legacy converter | `engine/legacyConverter.ts` | Layout + row/col index → address-based actions |
-| Rich engine | `engine/actionEngine.ts` | Dispatches RichAction to handlers |
+| Overwrite guard | `engine/overwriteGuard.ts` | Pre-write occupancy check; blocks silent data loss |
+| Rich engine | `engine/actionEngine.ts` | Dispatches RichAction to handlers after guard |
 
 **Rich handlers** (`engine/handlers/`):
 
 | Handler | Actions |
 |---------|---------|
-| `cell.handler.ts` | SET_CELL, SET_FORMULA, CLEAR |
-| `rowCol.handler.ts` | ADD_ROW, DELETE_ROW, INSERT_ROW/COLUMN |
+| `cell.handler.ts` | SET_CELL, SET_FORMULA, BATCH_SET, FILL_DOWN |
+| `rowCol.handler.ts` | ADD_ROW, DELETE_ROW, INSERT_ROW; legacy + **semantic** `INSERT_COLUMN` / `DELETE_COLUMN` |
 | `sheet.handler.ts` | ADD_SHEET, DELETE_SHEET, RENAME, COPY |
 | `table.handler.ts` | WRITE_TABLE, CREATE_TABLE |
 | `sort.handler.ts` | SORT_RANGE |
 | `format.handler.ts` | FORMAT_RANGE |
-| `misc.handler.ts` | HIGHLIGHT_CELL, MERGE, BATCH_SET, … |
+| `range.handler.ts` | COPY_FILTERED_RANGE, FORMAT_MATCHING_ROWS, MOVE_RANGE |
+| `aggregate.handler.ts` | AGGREGATE_TABLE |
+| `chart.handler.ts` | CREATE_CHART, UPDATE_CHART |
+| `misc.handler.ts` | HIGHLIGHT_CELL, MERGE, CLEAR_RANGE, AUTO_FILL, … |
 | `worksheet.handler.ts` | HIDE/UNHIDE row/column, FREEZE/UNFREEZE, SET_ZOOM, PROTECT/UNPROTECT |
+
+### 7.7.1 Overwrite guard (spec 14)
+
+**File:** `frontend/src/engine/overwriteGuard.ts`
+
+Runs inside `RichActionEngine.dispatch` **before** any handler write. Accept and preview-apply both go through this path.
+
+| Guaranteed behavior | Detail |
+|---------------------|--------|
+| Guarded types | `SET_CELL`, `SET_FORMULA`, `BATCH_SET`, `WRITE_TABLE`, `FILL_DOWN`, `AUTO_FILL`, `APPEND_ROW`, `COPY_FILTERED_RANGE`, `MOVE_RANGE`, `AGGREGATE_TABLE` |
+| Bypass | Only when `explicitOverwriteConfirmed === true` (user-confirmed replace intent — Executor must never invent this flag) |
+| On block | Throws `OverwriteGuardError` with sample existing values + remediation hint (`INSERT_COLUMN` with `afterLastColumn`) |
+| Hard stop | Engine does not continue applying later actions after a block |
+
+**Semantic `INSERT_COLUMN`** (`rowCol.handler.ts` → `handleSemanticInsertColumn`):
+
+```json
+{ "type": "INSERT_COLUMN", "sheetName": "Purchase Register",
+  "columnName": "Net of Tax", "position": "afterLastColumn",
+  "formula": "=J{row}-I{row}" }
+```
+
+- `afterLastColumn` → first empty column after the **live** Office.js used range (not a cached sample).
+- `{ afterColumn: "Total Amount" }` → insert after that header (shifts columns right; no overwrite of existing values).
+- Placement probe still runs an occupancy check on the target column.
+
+Regression: `engine/overwriteGuard.spec.ts`, `cellix_backend/test/insert-column-overwrite.spec.ts`.
 
 ### 7.8 UI components
 
@@ -462,6 +509,7 @@ SheetAction[] → utils/actionEngine.ts (facade)
 |-----------|--------|------|
 | `ConversationPanel` | Active | Main chat UI, turns, input, Ask/Plan/Action mode switch |
 | `PanelHeader` | Active | Session tabs, mode selector, Usage/Audit popovers |
+| `ActionResponseCard` | Active | Spec 15 action card: `userFacingSummary` + Accept/Reject + expandable `internalDetails` |
 | `PreviewSummaryBar` | Active | Preview change list; Accept/Reject shown only when `showActions` (after reveal) |
 | `ChangeHistoryPanel` | Active | Past change sets with revert, citation badges, exception chips |
 | `SourcePreview` | Active | Citation list + jump-to-workbook source |
@@ -530,6 +578,7 @@ Compression metadata (`sheetCompression`) tells the backend when rows were trunc
 |--------|---------|
 | `utils/payloadCompressor.ts` | Assembles request body; maps `context.previousMessages` → `conversationHistory` |
 | `utils/actionGuard.ts` | Sanitizes dangerous actions before apply |
+| `utils/userFacingResponse.ts` | Spec 15: resolve `userFacingSummary` vs `internalDetails`; filter internal copy markers |
 | `utils/clarification.util.ts` | Single pending clarification policy |
 | `utils/statusMessage.ts`, `thoughtSummary.ts`, `revealQueue.ts` | Visual timeline / staged reveal |
 | `utils/suggestedFollowUps.ts` | Client-side follow-up chip generation |
@@ -1003,7 +1052,7 @@ Each event's `data` is JSON. Most events include `conversationId`.
 | `answer` | Server → Client | Final natural language answer; **may embed `matches`** for find results |
 | `question` | Server → Client | Clarifying question + options |
 | `clarification` | Server → Client | Ambiguity clarification |
-| `actions` | Server → Client | `SheetAction[]` + explanation + optional change set (Act mode writes) |
+| `actions` | Server → Client | `SheetAction[]` + explanation + optional ChangeSet; may include `userFacingSummary`, `internalDetails`, `partialProgress`, `failedSubtask` |
 | `plan` | Server → Client | Legacy plan payload (orchestrator plan-only helper) |
 | `plan_only` | Server → Client | **Plan mode** read-only steps / proposed actions — never queues Accept/Reject |
 | `matches` | Parser only | Backend embeds matches inside `answer`; standalone event not emitted |
@@ -1033,7 +1082,7 @@ Normalized with `normalizeAssistantMode()` — `act` aliases `action`; omitted d
 
 Mode selection persists **per workbook** in `chatSessionStorage.assistantMode` (not a global key).
 
-Frontend enforces read-only in ask/plan even if backend accidentally emits actions. Action-card copy is shortened via `actionPreviewCopy.ts` (no cell-by-cell dumps).
+Frontend enforces read-only in ask/plan even if backend accidentally emits actions. Action-card copy uses `userFacingResponse.ts` / `ActionResponseCard` (spec 15): default view shows plain-English `userFacingSummary`; tier/model/raw action strings belong under expandable `internalDetails`.
 
 ---
 
@@ -1101,7 +1150,8 @@ SheetAction[] (from backend or local)
   → actionNormalizer.partitionActions → rich[] | unsupported[]
   → legacyConverter.convertLegacyToRich (row/col → address-based RichAction)
   → RichActionEngine.applyActions(rich)
-  → engine/handlers/*.handler.ts (Office.js Excel.run)
+       → guardAgainstOverwrite(action)   # every write path, including Accept
+       → engine/handlers/*.handler.ts (Office.js Excel.run)
 ```
 
 | Component | Path | Role |
@@ -1109,6 +1159,7 @@ SheetAction[] (from backend or local)
 | Facade | `utils/actionEngine.ts` | Entry point; sanitizes + delegates to rich engine |
 | Normalizer | `engine/actionNormalizer.ts` | Converts all SheetAction → RichAction |
 | Legacy converter | `engine/legacyConverter.ts` | Row/col index → address-based rich actions |
+| Overwrite guard | `engine/overwriteGuard.ts` | Blocks writes into occupied ranges unless explicitly confirmed |
 | Rich engine | `engine/actionEngine.ts` | Dispatches RichAction to handlers |
 | Worksheet handler | `engine/handlers/worksheet.handler.ts` | Layout ops: hide/unhide, freeze, zoom, protect |
 
@@ -1118,14 +1169,15 @@ Unsupported action types surface as explicit errors — no silent skip.
 
 | Location | Format |
 |----------|--------|
+| `shared/action.types.ts` | Canonical RichAction types (incl. semantic `INSERT_COLUMN`) |
 | `cellix_backend/src/actions/action.types.ts` | Partial rich, address-based types (backend) |
 | `frontend/src/types/sheet-actions.ts` | Legacy row/col index format (canonical client input; converted before apply) |
 | `cellix_backend/src/excel-ai/types/sheet-actions.types.ts` | Backend payload mirror + intent enums |
-| `frontend/src/action.types.ts` | Re-exports backend/shared types (ensure `shared/` path exists or import is updated) |
+| `frontend/src/action.types.ts` | Re-exports `@/action.types` → shared |
 
 ### 13.3 Rich action types (backend actions module)
 
-`ADD_ROW`, `APPEND_ROW`, `INSERT_ROW`, `SET_CELL`, `SET_FORMULA`, `FORMAT_RANGE`, `FILL_DOWN`, `AUTO_FILL`, `BATCH_SET`, `DELETE_ROW`, `INSERT_COLUMN`, `DELETE_COLUMN`, `ADD_SHEET`, `DELETE_SHEET`, `RENAME_SHEET`, `COPY_SHEET`, `CREATE_TABLE`, `DEFINE_NAMED_RANGE`, `AUTOFIT_COLUMNS`, `WRITE_TABLE`, `HIGHLIGHT_CELL`, `MERGE_CELLS`, `CLEAR_RANGE`, `SORT_RANGE`, `CLARIFY`, `CHECKPOINT`
+`ADD_ROW`, `APPEND_ROW`, `INSERT_ROW`, `SET_CELL`, `SET_FORMULA`, `FORMAT_RANGE`, `FILL_DOWN`, `AUTO_FILL`, `BATCH_SET`, `DELETE_ROW`, `INSERT_COLUMN`, `DELETE_COLUMN`, `ADD_SHEET`, `DELETE_SHEET`, `RENAME_SHEET`, `COPY_SHEET`, `CREATE_TABLE`, `CREATE_CHART`, `UPDATE_CHART`, `AGGREGATE_TABLE`, `DEFINE_NAMED_RANGE`, `AUTOFIT_COLUMNS`, `WRITE_TABLE`, `HIGHLIGHT_CELL`, `MERGE_CELLS`, `CLEAR_RANGE`, `SORT_RANGE`, `COPY_FILTERED_RANGE`, `FORMAT_MATCHING_ROWS`, `MOVE_RANGE`, `CLARIFY`, `CHECKPOINT`
 
 **Note:** `CREATE_SHEET` is used by `FindExportService` and preview policy; `legacyConverter` maps it to rich `ADD_SHEET`.
 
@@ -1138,13 +1190,30 @@ Unsupported action types surface as explicit errors — no silent skip.
 | Handler | Actions |
 |---------|---------|
 | `cell.handler.ts` | SET_CELL, SET_FORMULA, BATCH_SET, FILL_DOWN |
-| `rowCol.handler.ts` | ADD_ROW, DELETE_ROW, INSERT/DELETE_COLUMN |
+| `rowCol.handler.ts` | ADD_ROW, DELETE_ROW, INSERT/DELETE_COLUMN (legacy + semantic) |
 | `sheet.handler.ts` | ADD_SHEET, DELETE_SHEET, RENAME, COPY |
 | `table.handler.ts` | WRITE_TABLE, CREATE_TABLE, AUTOFIT_COLUMNS |
 | `sort.handler.ts` | SORT_RANGE |
 | `format.handler.ts` | FORMAT_RANGE |
+| `range.handler.ts` | COPY_FILTERED_RANGE, FORMAT_MATCHING_ROWS, MOVE_RANGE |
+| `aggregate.handler.ts` | AGGREGATE_TABLE |
+| `chart.handler.ts` | CREATE_CHART, UPDATE_CHART |
 | `misc.handler.ts` | HIGHLIGHT_CELL, MERGE, CLEAR_RANGE, AUTO_FILL, … |
 | `worksheet.handler.ts` | HIDE/UNHIDE row/column, FREEZE/UNFREEZE, SET_ZOOM, PROTECT/UNPROTECT, comments |
+
+### 13.6 Overwrite guard & semantic INSERT_COLUMN (spec 14)
+
+**Problem class:** “Add a column called X” expressed as `SET_FORMULA` into a guessed next column (e.g. K) silently destroyed existing data (`Payment Status`). Reporting success made this worse than a visible failure.
+
+**Defense in depth:**
+
+1. **Executor prompt** (`agents/prompts/executor.prompt.ts`) — ADD COLUMN rule: emit exactly one semantic `INSERT_COLUMN`; never target an existing column with `SET_CELL` / `SET_FORMULA`.
+2. **Frontend overwrite guard** — occupancy check on every guarded write at apply time (preview Accept included).
+3. **Semantic insert handler** — resolves `afterLastColumn` from live `getUsedRange()`, optional formula with `{row}` placeholder.
+
+`explicitOverwriteConfirmed` is reserved for unambiguous user replace intents (“replace column K with …”). The Executor must never set it on its own.
+
+See also §7.7.1 and [`specs/14_critical_data_loss_column_overwrite.md`](../specs/14_critical_data_loss_column_overwrite.md).
 
 ---
 
@@ -1155,14 +1224,20 @@ Unsupported action types surface as explicit errors — no silent skip.
 1. Actions arrive (local, shortcut, or SSE)
 2. `shouldPreviewActions` decides preview vs auto-apply
 3. `previewManager`:
-   - Applies **structural + early deferred** actions immediately (not `SORT_RANGE` / `DELETE_SHEET`)
-   - Shows **PreviewSummaryBar** / action-card Accept/Reject after reveal
+   - Applies **soft structural** sheet ops only when listed (not cell writes / not `INSERT_COLUMN`)
+   - Shows **PreviewSummaryBar** / `ActionResponseCard` Accept/Reject after reveal
 4. **Visual presentation completes** (steps, thinking, answer typing) → `isTurnPresentationComplete` → Accept/Reject appear
-5. User **Accept** → applies any actions not yet landed (structural retry + hard-deferred `SORT_RANGE` / `DELETE_SHEET`) → `markChangeSetApplied`
-6. User **Reject** → `buildPreviewRejectActions` undoes structural creates / early cell writes; hard-deferred actions were never applied so the sheet stays as-is
+5. User **Accept** → `applyActionsWithAudit` → `previewManager.accept()` or `ActionEngine.applyActions` → RichActionEngine → **`guardAgainstOverwrite`** → handlers → `markChangeSetApplied`
+6. User **Reject** → `buildPreviewRejectActions` undoes structural creates / early cell writes; deferred actions were never applied so the sheet stays as-is
 7. **ChangeHistoryPanel** below the conversation shows past change sets with revert support, **citation badges**, and **exception markers** (opens `SourcePreview`)
 
 **Copy rule:** “Applied” in the UI means `proposalStatus === 'accepted'` after Accept succeeded — not merely that the backend emitted `actions` / ChangeSet preview.
+
+### 14.1.1 Accept safety vs overwrite guard
+
+**Confirmed:** Accept does **not** bypass the overwrite guard. Cell `SET_FORMULA` / `SET_CELL` proposals that target occupied cells (e.g. `Purchase Register!K2` containing “Paid”) will throw `OverwriteGuardError` on Accept; Excel values are unchanged. `acceptActions` restores `proposalStatus: 'pending'` and surfaces the error.
+
+**Operational guidance:** If the UI shows both a correct guard message *and* a contradictory “pending review” Accept card for a write into occupied data, **Reject** — Accept is safe from data loss but the proposed action is still wrong and should not be offered as a successful partial apply.
 
 ### 14.2 Change set lifecycle
 
@@ -1230,9 +1305,9 @@ After Executor JSON parse, actions pass through:
 2. **Virtual verify** (`virtual/virtualApply.ts`) — `FORMAT_RANGE` is a shadow no-op; `SORT_RANGE` sorts dense data only (sparse/null-padded compressed sheets → **no-op** so ChangeSet diffs stay clean)
 3. **`sanitizeAction`** (`conversation-engine.service.ts`) — `FORMAT_RANGE` etc. **require integer `row`/`col`**; `SORT_RANGE` requires `sheetName` + `range` + `key`. Do **not** loosen sanitize — normalize must produce the contract.
 
-`executor.prompt.ts` documents both `SORT_RANGE` (A1 `range` + `key`) and `FORMAT_RANGE` (index + `format`) schemas so the model prefers the canonical shapes.
+`executor.prompt.ts` documents `SORT_RANGE`, `FORMAT_RANGE`, **semantic `INSERT_COLUMN`** (`columnName` + `afterLastColumn` / `{ afterColumn }` + optional `{row}` formula), and native range ops (`COPY_FILTERED_RANGE`, `FORMAT_MATCHING_ROWS`, `AGGREGATE_TABLE`, charts).
 
-Regression: `test/normalize-executor-output.spec.ts`, `test/virtual-sort-sparse.spec.ts`. See also [`specs/10_critical_bugfixes.md`](../specs/10_critical_bugfixes.md).
+Regression: `test/normalize-executor-output.spec.ts`, `test/virtual-sort-sparse.spec.ts`, `test/insert-column-overwrite.spec.ts`. See also [`specs/10_critical_bugfixes.md`](../specs/10_critical_bugfixes.md), [`specs/14_critical_data_loss_column_overwrite.md`](../specs/14_critical_data_loss_column_overwrite.md).
 
 ### Tier 2 Generate→Verify
 
@@ -1243,6 +1318,9 @@ ExecutorAgent (single synthetic subtask)
   → FormulaValidator.checkNoHardcodedLiterals  (blocks before Verifier)
   → FormulaValidator.validatePreApply
   → VerifierAgent  (mandatory — shouldSkipVerifier must never be used)
+  → on fail: exactly one retry with verifier feedback (spec 18 Bug 1)
+  → if retry returns toolRequest: one tool-informed follow-up (spec 18 Bug 4)
+  → optional deterministic sourceRange patch for charts
   → sourceRefs from formula precedents
 ```
 
@@ -1262,9 +1340,26 @@ for each subtask (dependency-ordered waves):
 
 VerifierAgent(allActions) OR deterministic checks (+ optional shouldSkipVerifier on Tier 3 only)
 on failure → retry ONLY failed subtasks (scoped, max 2 attempts per step)
+on exhaustion → failedSubtask.reason; may emit partialProgress with completed siblings' actions
 ```
 
+**Partial progress:** When later subtasks fail after earlier ones succeed, the SSE `actions` event can include `partialProgress: true` and `failedSubtask`. Prefer completed-only actions when `preferCompletedOnly` is set. **Caveat:** a “completed” sibling that is a `SET_FORMULA` into an occupied column can still reach the Accept UI; the overwrite guard blocks apply, but the card should be Rejected — do not treat partial progress as verified-safe (see §14.1.1 and known limitations).
+
+**Retry feedback sources:** Backend `executor.retryStep` feeds **verifier / deterministic-checker feedback**, not frontend `OverwriteGuardError` text. Guard remediation (“use INSERT_COLUMN with afterLastColumn”) is a client-side last line of defense and is not currently wired into the agent retry loop.
+
 **Hardcode lint:** Domain arithmetic and Tier 2 formula paths must write **formulas**, never numeric literals as `SET_CELL` values. Enforced by `FormulaValidatorService.checkNoHardcodedLiterals`.
+
+### User-facing vs internal copy (spec 15)
+
+Write-route SSE payloads should separate:
+
+| Field | Audience | Content |
+|-------|----------|---------|
+| `userFacingSummary` | Default UI | `contextLine`, `headline`, optional `bullets`, `supportingDetail` — plain English of the change |
+| `internalDetails` | Expandable “Show details” | `tier`, `model`, `processingLabel`, `rawActionSummary`, `legacyExplanation`, … |
+| `explanation` | Legacy / fallback | Prefer not to put routing labels here when `userFacingSummary` is present |
+
+Frontend: `utils/userFacingResponse.ts`, `components/ConversationPanel/ActionResponseCard.tsx`. See [`specs/15_user_facing_response_structure.md`](../specs/15_user_facing_response_structure.md).
 
 ### Domain tools (scaffolding)
 
@@ -1349,11 +1444,15 @@ Key test files:
 - `utils/previewPolicy.spec.ts` — preview gating
 - `utils/previewRevert.spec.ts` — reject inverses (incl. SORT skips cell-diff undo)
 - `utils/turnPresentation.spec.ts` — Accept/Reject readiness after reveal
-- Backend: `test/normalize-executor-output.spec.ts` — FORMAT_RANGE A1→indices
-- Backend: `test/virtual-sort-sparse.spec.ts` — sparse shadow SORT no-op
 - `utils/chatSessionStorage.spec.ts` — sessions + `assistantMode` persistence
 - `engine/actionNormalizer.spec.ts` — unified rich conversion
 - `engine/legacyConverter.spec.ts` — layout action conversion
+- `engine/overwriteGuard.spec.ts` — occupancy detection + guarded action types + INSERT_COLUMN conversion
+- `utils/userFacingResponse.spec.ts` — default vs internal copy (spec 15)
+- `components/ConversationPanel/ActionResponseCard.spec.tsx` — Accept/Reject + details toggle
+- Backend: `test/normalize-executor-output.spec.ts` — FORMAT_RANGE A1→indices
+- Backend: `test/virtual-sort-sparse.spec.ts` — sparse shadow SORT no-op
+- Backend: `test/insert-column-overwrite.spec.ts` — semantic INSERT_COLUMN + Payment Status untouched
 
 ### Backend (Jest)
 
@@ -1402,6 +1501,10 @@ CI: `.github/workflows/backend-tests.yml` runs the phase-regression suite then f
 | Complexity flag | Production should start `off` → `shadow` → `tier01` → `full` (see rollout doc) |
 | Data vs compound routing | `LlmRouterService` still runs data-keyword fast lane **before** complexity; compound “find … then highlight” can still take `route=data` (see `specs/10` Bug 3) |
 | Verifier parse fallback | Verifier defaults to pass on JSON parse failure (logged, not silent) — Tier 3 path |
+| Verifier vs header truth | Verifier can hallucinate sheet structure (e.g. claim a “Net of Tax” column exists when K is Payment Status) and reject correct `INSERT_COLUMN` while a sibling `SET_FORMULA` into K surfaces as partial progress |
+| Guard feedback not in retry | Frontend `OverwriteGuardError` remediation is not fed into `executor.retryStep` — same class of gap as spec 18 Bug 1 against a different feedback source |
+| Partial progress Accept cards | Occupied-column `SET_FORMULA` can still appear as pending Accept/Reject; Accept re-blocks via overwrite guard (data safe) but UX is contradictory — Reject |
+| Spec 15 headline fidelity | When `userFacingSummary.headline` carries verifier failure text, default UI can contradict the accurate guard message shown elsewhere |
 | Backend build | `src/**/*.spec.ts` excluded from app `tsconfig.json` (Jest-only); run `npm test` separately |
 | Reasoning models | GPT-5 on OpenRouter may return empty content if token budget too low; mitigated in `OpenRouterService.complete()` |
 | Shortcut AI parity | ~90%+ for locally-routable workbook actions; complex multi-step ops still use LLM |
@@ -1417,8 +1520,13 @@ CI: `.github/workflows/backend-tests.yml` runs the phase-regression suite then f
 |----------|-------------|
 | [`specs/00_OVERVIEW.md`](../specs/00_OVERVIEW.md) … [`09_context_pipeline_optimization.md`](../specs/09_context_pipeline_optimization.md) | Pipeline upgrade specs (tiering, modes, domain tools, citations, context) |
 | [`specs/10_critical_bugfixes.md`](../specs/10_critical_bugfixes.md) | P0/P1 production bugs — FORMAT sanitize drop, SORT false-applied, column slicer, compound routing |
+| [`specs/14_critical_data_loss_column_overwrite.md`](../specs/14_critical_data_loss_column_overwrite.md) | P0 overwrite guard + semantic `INSERT_COLUMN` |
+| [`specs/15_user_facing_response_structure.md`](../specs/15_user_facing_response_structure.md) | Default plain-English summary vs expandable internals |
+| [`specs/16_planner_token_exhaustion.md`](../specs/16_planner_token_exhaustion.md) | Planner token / truncation handling |
+| [`specs/17_verifier_truncation_and_selective_retry.md`](../specs/17_verifier_truncation_and_selective_retry.md) | Verifier truncation + selective retry |
+| [`specs/18_tier2_retry_and_context_resolution.md`](../specs/18_tier2_retry_and_context_resolution.md) | Tier 2 verifier-feedback retry + tool-informed follow-up |
 | [`COMPLEXITY_TIERING_ROLLOUT.md`](./COMPLEXITY_TIERING_ROLLOUT.md) | Feature-flag modes, shadow-mode review checklist, domain-tools CA gate |
-| [`cellix-architecture-diagrams.html`](./cellix-architecture-diagrams.html) | Interactive Mermaid diagrams (updated July 2026) |
+| [`cellix-architecture-diagrams.html`](./cellix-architecture-diagrams.html) | Interactive Mermaid diagrams (updated July 28, 2026 — overwrite guard, INSERT_COLUMN, spec 15) |
 | [`Dashboard/README.md`](../Dashboard/README.md) | Ops Dashboard setup (request/planner log viewer) |
 | [`frontend/FRONTEND_BACKEND_CONTRACT.md`](../frontend/FRONTEND_BACKEND_CONTRACT.md) | Frontend/backend API contract (note: may reference legacy `/excel-ai/process`) |
 | [`cellix_backend/docs/cellix_technical_guide.md`](../cellix_backend/docs/cellix_technical_guide.md) | Legacy guide — **superseded** by this document |
@@ -1567,6 +1675,24 @@ Without step 2, sanitize drops the action → empty array → false “could not
 5. Accept: apply SORT_RANGE via Office.js (only mutation point)
 6. Reject: no-op on workbook (sort never applied)
 ```
+
+## Appendix J — Add-column overwrite guard / Accept safety (spec 14)
+
+```
+1. User: Add a column called "Net of Tax" that subtracts Tax Amount from Total Amount
+2. Preferred path: Executor emits INSERT_COLUMN { columnName, position: "afterLastColumn", formula }
+   → Accept → handleSemanticInsertColumn reads live used range → writes header+formula in next empty col (e.g. M)
+   → Payment Status (K) untouched
+3. Bad path (legacy): SET_FORMULA into col 10 (K2) with before="Paid", after="=J2-I2"
+   → Preview: cell write deferred; Accept/Reject card may still show
+   → Accept → guardAgainstOverwrite loads K2 values → OverwriteGuardError
+     "Write blocked: target range K2 already contains data… Existing values include: Paid.
+      If you meant to add a new column, use INSERT_COLUMN with position afterLastColumn…"
+   → Excel unchanged; proposalStatus restored to pending
+4. Do not Accept a pending occupied-column write — Reject and re-ask / fix pipeline
+```
+
+Known gaps when documenting incidents: verifier may reject correct INSERT_COLUMN with a hallucinated “duplicate column” reason; retry does not consume frontend guard text; partialProgress can still queue the bad SET_FORMULA for review (data-safe on Accept, wrong UX).
 
 ---
 

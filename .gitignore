@@ -1,0 +1,31 @@
+# Nested application repos — each has its own GitHub remote.
+# Clone them alongside this workspace; do not commit them here.
+/frontend/
+/cellix_backend/
+/Dashboard/
+
+# Backend CI belongs with usecellix/Server until this is a real monorepo.
+/.github/
+
+# Local dumps and installers
+last_log.txt
+habits.txt
+*.log
+*.exe
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies / build (in case they appear at root)
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*~
+.idea/

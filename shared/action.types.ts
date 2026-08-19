@@ -3,6 +3,7 @@ export type CellValue = string | number | boolean | null;
 export interface FormatSpec {
   bold?: boolean;
   italic?: boolean;
+  underline?: boolean;
   fontSize?: number;
   fontColor?: string;
   fillColor?: string;
@@ -216,7 +217,7 @@ export interface CreateChartAction {
   endCell?: string;
   /** Alternate anchor (spec 13); preferred over startCell when both present in handler */
   destCell?: string;
-  colorScheme?: 'default' | 'blue' | 'grey' | 'blueGrey';
+  colorScheme?: 'default' | 'blue' | 'grey' | 'blueGrey' | 'green' | 'red' | 'orange' | 'purple' | 'yellow';
   /** Optional stable id; Office.js name is captured on apply if omitted */
   chartId?: string;
 }
@@ -226,12 +227,13 @@ export interface UpdateChartAction {
   sheetName: string;
   chartId: string;
   chartType?: string;
-  colorScheme?: 'default' | 'blue' | 'grey' | 'blueGrey';
+  colorScheme?: 'default' | 'blue' | 'grey' | 'blueGrey' | 'green' | 'red' | 'orange' | 'purple' | 'yellow';
 }
 
 export interface AggregateTableAggregation {
   column: string;
-  fn: 'sum' | 'count' | 'average' | 'max' | 'min';
+  /** 'first' passes through a label column 1:1 with the group key (e.g. Supplier Name alongside a GSTIN group-by) — not a numeric reduction. */
+  fn: 'sum' | 'count' | 'average' | 'max' | 'min' | 'first';
   outputLabel: string;
 }
 
@@ -240,6 +242,8 @@ export interface AggregateTableAction {
   sourceSheet: string;
   sourceRange: string;
   groupByColumn: string;
+  /** Derive grouping key from groupByColumn (e.g. month from a date). */
+  groupByTransform?: 'none' | 'month' | 'year' | 'monthYear' | 'weekday' | 'quarter';
   aggregations: AggregateTableAggregation[];
   sortBy?: { column: string; direction: 'asc' | 'desc' };
   topN?: number;
@@ -322,6 +326,21 @@ export interface FormatMatchingRowsAction {
   format: FormatSpec;
 }
 
+/**
+ * Set a value in targetColumn for every row matching filter (or all data rows if filter omitted).
+ * Office.js scans the full range — never enumerate SET_CELL from a sample.
+ */
+export interface SetMatchingRowsAction {
+  type: 'SET_MATCHING_ROWS';
+  sheetName: string;
+  range: string;
+  hasHeaders: boolean;
+  filter?: RangeFilterSpec;
+  targetColumn: string;
+  value: string | number | boolean;
+  explicitOverwriteConfirmed?: boolean;
+}
+
 export interface MoveRangeAction {
   type: 'MOVE_RANGE';
   sourceSheet: string;
@@ -383,6 +402,13 @@ export interface FreezePanesAction {
 export interface UnfreezePanesAction {
   type: 'UNFREEZE_PANES';
   sheetName?: string;
+}
+
+export interface AutoFilterAction {
+  type: 'AUTO_FILTER';
+  sheetName?: string;
+  /** Full header + data range the filter dropdowns apply to, e.g. "A1:N51". */
+  range: string;
 }
 
 export interface SetZoomAction {
@@ -468,6 +494,7 @@ export type RichAction =
   | CheckpointAction
   | CopyFilteredRangeAction
   | FormatMatchingRowsAction
+  | SetMatchingRowsAction
   | MoveRangeAction
   | HideRowAction
   | UnhideRowAction
@@ -477,6 +504,7 @@ export type RichAction =
   | SetColumnWidthAction
   | FreezePanesAction
   | UnfreezePanesAction
+  | AutoFilterAction
   | SetZoomAction
   | ProtectSheetAction
   | UnprotectSheetAction

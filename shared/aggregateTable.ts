@@ -1,4 +1,7 @@
-export type AggregateFn = 'sum' | 'count' | 'average' | 'max' | 'min';
+export type AggregateFn = 'sum' | 'count' | 'average' | 'max' | 'min' | 'first';
+
+/** Derived grouping key transforms (computed in code during aggregation). */
+export type GroupByTransform = 'none' | 'month' | 'year' | 'monthYear' | 'weekday' | 'quarter';
 
 export interface AggregateSpec {
   column: string;
@@ -10,6 +13,8 @@ export interface AggregateTableParams {
   rows: unknown[][];
   hasHeaders: boolean;
   groupByColumn: string;
+  /** When set, group by a derived value of groupByColumn (e.g. month-of-year). */
+  groupByTransform?: GroupByTransform;
   aggregations: AggregateSpec[];
   sortBy?: { column: string; direction: 'asc' | 'desc' };
   topN?: number;
@@ -29,7 +34,7 @@ function findCol(headerRow: unknown[], name: string): number {
   return headerRow.findIndex((cell) => String(cell ?? '').trim().toLowerCase() === target);
 }
 
-function aggregateValues(values: number[], fn: AggregateFn): number {
+function aggregateValues(values: number[], fn: Exclude<AggregateFn, 'first'>): number {
   if (fn === 'count') return values.length;
   if (values.length === 0) return 0;
   if (fn === 'sum') return values.reduce((a, b) => a + b, 0);
@@ -38,12 +43,85 @@ function aggregateValues(values: number[], fn: AggregateFn): number {
   return Math.min(...values);
 }
 
+function parseDateLike(value: unknown): Date | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Excel serial date (days since 1899-12-30) — only treat large numbers as serials.
+    if (value > 20000 && value < 80000) {
+      const epoch = Date.UTC(1899, 11, 30);
+      return new Date(epoch + value * 86400000);
+    }
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+}
+
+const MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Transform a raw cell value into a grouping key.
+ * Office.js / backend compute this — the LLM only specifies the transform name.
+ */
+export function applyGroupByTransform(
+  value: unknown,
+  transform: GroupByTransform | undefined,
+): string {
+  const raw = String(value ?? '').trim();
+  if (!transform || transform === 'none') return raw;
+
+  const date = parseDateLike(value);
+  if (!date) return raw;
+
+  switch (transform) {
+    case 'month':
+      return MONTH_NAMES[date.getUTCMonth()] ?? raw;
+    case 'year':
+      return String(date.getUTCFullYear());
+    case 'monthYear':
+      return `${MONTH_NAMES[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+    case 'weekday':
+      return WEEKDAY_NAMES[date.getUTCDay()] ?? raw;
+    case 'quarter':
+      return `Q${Math.floor(date.getUTCMonth() / 3) + 1}`;
+    default:
+      return raw;
+  }
+}
+
+function groupHeaderLabel(groupByColumn: string, transform?: GroupByTransform): string {
+  if (!transform || transform === 'none') return groupByColumn;
+  if (transform === 'month') return 'Month';
+  if (transform === 'year') return 'Year';
+  if (transform === 'monthYear') return 'Month';
+  if (transform === 'weekday') return 'Weekday';
+  if (transform === 'quarter') return 'Quarter';
+  return groupByColumn;
+}
+
 /**
  * Group-by aggregate in memory — same pattern as COPY_FILTERED_RANGE (no LLM transcription).
  * Returns a 2D table: header row + data rows.
  */
 export function buildAggregateTable(params: AggregateTableParams): unknown[][] {
-  const { rows, hasHeaders, groupByColumn, aggregations, sortBy, topN } = params;
+  const { rows, hasHeaders, groupByColumn, groupByTransform, aggregations, sortBy, topN } = params;
   if (rows.length === 0) return [];
 
   const headerRow = hasHeaders ? rows[0] : null;
@@ -67,19 +145,28 @@ export function buildAggregateTable(params: AggregateTableParams): unknown[][] {
 
   const groups = new Map<string, unknown[][]>();
   for (const row of dataRows) {
-    const key = String(row[groupIdx] ?? '').trim();
+    const key = applyGroupByTransform(row[groupIdx], groupByTransform);
     if (!key) continue;
     const bucket = groups.get(key) ?? [];
     bucket.push(row);
     groups.set(key, bucket);
   }
 
-  const outHeader = [groupByColumn, ...aggregations.map((a) => a.outputLabel)];
+  const outGroupHeader = groupHeaderLabel(groupByColumn, groupByTransform);
+  const outHeader = [outGroupHeader, ...aggregations.map((a) => a.outputLabel)];
   let outRows: unknown[][] = [];
 
   for (const [key, bucket] of groups) {
     const cells: unknown[] = [key];
     for (const agg of aggCols) {
+      if (agg.fn === 'first') {
+        // Passthrough for a label/identity column that's 1:1 with the group key
+        // (e.g. carrying a Supplier Name column alongside a GSTIN group-by, for
+        // a GSTR-2A/2B-style reconciliation report) — not a numeric reduction,
+        // so it never goes through aggregateValues.
+        cells.push(bucket[0]?.[agg.idx] ?? '');
+        continue;
+      }
       const nums =
         agg.fn === 'count'
           ? bucket.map(() => 1)
@@ -93,9 +180,12 @@ export function buildAggregateTable(params: AggregateTableParams): unknown[][] {
 
   if (sortBy) {
     const sortColIdx =
-      sortBy.column.trim().toLowerCase() === groupByColumn.trim().toLowerCase()
+      sortBy.column.trim().toLowerCase() === groupByColumn.trim().toLowerCase() ||
+      sortBy.column.trim().toLowerCase() === outGroupHeader.trim().toLowerCase()
         ? 0
-        : outHeader.findIndex((h) => String(h).trim().toLowerCase() === sortBy.column.trim().toLowerCase());
+        : outHeader.findIndex(
+            (h) => String(h).trim().toLowerCase() === sortBy.column.trim().toLowerCase(),
+          );
     if (sortColIdx >= 0) {
       const dir = sortBy.direction === 'desc' ? -1 : 1;
       outRows.sort((a, b) => {
