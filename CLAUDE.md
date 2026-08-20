@@ -12,6 +12,14 @@ Three sub-projects:
 - `Dashboard/` — Next.js ops log viewer, port 3100
 - `shared/` — Shared TypeScript action types (`action.types.ts`)
 
+## Working With This Repo Across Sessions
+
+Claude Code has no memory between sessions — `VISION.md`, `PRD.md`, `ARCHITECTURE.md`, and `TASKS.md` in `Root/` are the memory. Three habits keep that memory trustworthy:
+
+1. **Start every session by reading `Root/VISION.md`, `Root/PRD.md`, `Root/ARCHITECTURE.md`, and `Root/TASKS.md` before doing anything else.** They're the source of truth for why, what, how, and what's left.
+2. **Don't fold "also fix X while you're in there" into an in-progress task.** That's how scope creep sneaks in. Add X as a new numbered item in `Root/TASKS.md` instead, and pick it up as its own task.
+3. **After finishing a task, update `Root/CODEBASE_ANALYSIS.md` and `Root/TASKS.md` to reflect it.** Stale docs are worse than no docs — a `Partial`/`New` flag or an open task that's actually done misleads the next session more than an honest gap would.
+
 ---
 
 ## Commands
@@ -102,10 +110,14 @@ Verifier checkers: `CompletenessChecker`, `FormattingChecker`, `SemanticFormulaC
 ### Action System
 All actions flow through `RichActionEngine` in the frontend before Office.js apply.
 
-- Action types are defined in `shared/action.types.ts` — the canonical source of truth shared between frontend and backend.
+- Action types are defined in `shared/action.types.ts` — the intended canonical source of truth shared between frontend and backend. In practice this drifts across five files; see `ARCHITECTURE.md` AD-7 for the current state and the proposed fix.
 - **Overwrite guard (spec 14)**: `guardAgainstOverwrite` runs on every value-writing action before Office.js write. Occupied cells without `explicitOverwriteConfirmed` throw `OverwriteGuardError`.
 - **INSERT_COLUMN semantic shape**: "Add a column" must use `INSERT_COLUMN` with `columnName` + `afterLastColumn` / `{ afterColumn }` — never `SET_FORMULA` into a guessed column index.
 - `normalizeExecutorOutput` converts A1 `range` strings on FORMAT-class actions into 0-based row/col indices before `sanitizeAction`.
+- **Action-type exhaustiveness checks (TASKS.md #5)**: `cellix_backend/src/excel-ai/types/action-catalog.ts` is a `Record<SheetActionType, CatalogEntry>` the compiler forces to stay exhaustive against the backend's own live action union — added after the `FREEZE_PANES` incident (a type declared with no handler wired up). The frontend mirrors the same pattern with two catalogs: `frontend/src/types/sheetActionCatalog.ts` (wire-type parity) and `frontend/src/engine/actionDispatchCatalog.ts` (dispatch completeness). `frontend/src/types/actionCatalogParity.spec.ts` imports the backend's catalog directly across the repo boundary and fails if the two unions disagree — a real drift detector, not a hand-copied mirror.
+
+### Workflow Tracing
+`WorkflowTraceService` (`cellix_backend/src/common/logging/workflow-trace.service.ts`) records a per-request DAG — `frontend_in → router/tier → planner → executor → verifier → changeset → sse_out → accept/reject`, plus `tool` nodes — into a `workflow_traces` Mongo collection (3-day TTL, same pattern as the other log collections). It's injected via `@Optional()` into `planner.agent.ts`, `executor.agent.ts`, `verifier.agent.ts`, and `change-set.service.ts`, appending nodes fire-and-forget as a request executes. The Dashboard's `/workflow` section (`WorkflowFlowViewer.tsx`, built on `@xyflow/react`) renders it as an interactive, color-coded, click-to-inspect flow graph. This is internal observability tooling, not a product-facing feature — it isn't in `PRD.md`, deliberately.
 
 ### SSE Protocol
 Backend streams SSE events from `POST /excel-ai/conversation`:

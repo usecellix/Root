@@ -312,7 +312,7 @@ Listing these is the point of the section — each is a plausible request that g
 
 **A4's 90% is the most debatable number here.** It trades reach against trust: raising it narrows the prompt range v1 accepts, lowering it admits more failures into both personas' adoption-blocker territory. Worth an explicit call.
 
-**Instrumentation gaps.** A5 and A6 cannot be measured today. Scope-violation detection requires comparing applied change sets against declared plan scope; formula-error detection requires a post-apply evaluation pass. **Both need building before the gates are real** — an unmeasurable gate is not a gate.
+**Instrumentation gaps — closed 2026-08-19, `TASKS.md` #48–49.** A5 and A6 are now computed on every change set (`ChangeSet.unintendedChanges`/`formulaErrorsIntroduced`, `Server/src/audit/diff.engine.ts`), tier-agnostically. Two scoping notes worth carrying into any use of these numbers: A5 is sheet-granularity (an action's own declared `sheetName`), not cell/range-granularity — it catches a change landing on a sheet nobody touched, not a wrong-range write within an already-declared sheet. A6 detects an error string appearing as a changed cell's value; it cannot detect a syntactically-valid formula that would evaluate to an error in real Excel, since the shadow workbook doesn't evaluate formulas (that's `FormulaValidatorService.validateReferences`'s job, pre-apply). Rollup/dashboard surfacing (`TASKS.md` #50–51) is still open — the raw per-change-set signal exists, the aggregate view does not yet.
 
 ### 6.2 Tier B — Baselined from Real Traffic (targets TBD)
 

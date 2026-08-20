@@ -62,21 +62,6 @@ assert zero fields are lost unless intentionally stripped.
 
 ---
 
-### 0.3a — Header-row formatting misrouted to FORMAT_MATCHING_ROWS, raw error leaks to user
-**File:** `24_header_row_format_matching_rows_leak.md`
-**Dependency:** related to 0.3 (same "wrong shape reaches an action type that can't handle it" family) but independent enough to do separately — pairs well with 0.3 since both touch action-type selection guidance in the Executor prompt.
-**Prompt:**
-```
-Implement 24_header_row_format_matching_rows_leak.md — fix action-type
-selection so header-row-targeting requests resolve to FORMAT_RANGE, never
-FORMAT_MATCHING_ROWS. Then add an error boundary so no raw internal
-exception/validation string can ever reach the user-facing answer field —
-this is a general defensive fix, not just for this one action type.
-```
-**Retest:** "Highlight the header row with light bg green" — single clean success message, header row actually filled light green, no leaked error text, no contradictory success/pending/error states shown together.
-
----
-
 ### 0.4 — Bug 1: false "applied" success on SORT
 **File:** `10_critical_bugfixes.md` (Bug 1)
 **Dependency:** none, can run in parallel with 0.3.
@@ -148,41 +133,6 @@ everything on truncation.
 
 ---
 
-### 0.11 — Overwrite guard blocks legitimate follow-up refinements to its own recent edit
-**File:** `21_overwrite_guard_refinement_recognition.md`
-**Dependency:** do after 0.1/0.2/0.10 — same subsystem, same request path, do last in this group so the guard's core behavior is stable before adding refinement recognition on top of it.
-**Why this matters:** without this, the guard blocks nearly every second-pass "tweak that" request a CA makes in normal iterative use — the guard is technically correct but practically unusable for follow-up edits.
-**Prompt:**
-```
-Implement 21_overwrite_guard_refinement_recognition.md — add the two
-confirmation signals (prior-turn range overlap, explicit change/update
-language) that should set explicitOverwriteConfirmed=true, without
-loosening the guard for genuinely fresh, unconfirmed writes.
-```
-**Retest:** BOTH cases — (a) "add remarks to paid invoices" then "change to paid invoices" in the same conversation now succeeds, AND (b) the original "Net of Tax" column repro from spec 14/19 is still correctly blocked. Both must pass; (b) regressing would be worse than not shipping this fix at all.
-
----
-
-### 0.12 — Partial-progress delivery must not ship a destructive action alone, plus false "Applied" on a failed apply call
-**File:** `22_order_dependent_partial_delivery_and_apply_mismatch.md`
-**Confirmed:** no actual data loss occurred in this trace (the 400 correctly blocked the write) — but this is still P0-adjacent because the underlying gap (partial delivery has no safety check for order-dependent destructive actions) is a live risk for the *next* similar request, and the false "Applied" state is the same false-success pattern as Bug 1 in spec 10, now confirmed on a destructive action.
-**Dependency:** builds on 0.8's selective-retry/partial-progress work (spec 17) — do after that's stable, since this extends the same partial-delivery mechanism with a safety check.
-**Prompt:**
-```
-Implement 22_order_dependent_partial_delivery_and_apply_mismatch.md.
-Priority order: Bug 2 first (partial-progress delivery must withhold a
-destructive action when the Verifier/dependency graph shows it depends on
-an unmet prerequisite — use the Planner's dependsOn graph if available,
-not verifier-text pattern matching). Then Bug 1 (investigate whether the
-Planner actually created a subtask for the Remarks-annotation clause at
-all). Then Bug 3 (fix the false "Applied" UI state on a 400 apply response,
-and find the root cause of the 400 itself — likely a ChangeSet gap for
-column-structural actions showing "0 cells previewed").
-```
-**Retest:** "delete the column payment status and in remarks add priority to unpaid invoices" — should either complete both steps in correct order, or clearly ask before doing the destructive half alone. Never show "Applied" unless the apply call actually succeeded.
-
----
-
 ## PHASE 1 — Feature Completion (after Phase 0 is stable and re-tested)
 
 ### 1.1 — Native range operations
@@ -207,7 +157,6 @@ These don't depend on Phase 0/1 and can be assigned to a separate Cursor session
 
 - `01-09` — tiering system, mode selector, citation/provenance layer, context pipeline optimization
 - `15_user_facing_response_structure.md` — response UX cleanup (do this once Phase 0's error/narration fixes are in, since 15 governs how those get displayed)
-- `23_ask_route_response_and_aggregation.md` — ask-route structured response + real aggregation (pairs naturally with `15` since both are response-quality fixes; do together if convenient — `23` reuses `13`'s aggregation logic, so confirm `13` is done first)
 
 ---
 

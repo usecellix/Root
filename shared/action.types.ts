@@ -1,3 +1,7 @@
+import type { RangeFilterOperator, RangeFilterSpec } from './rangeFilter';
+
+export type { RangeFilterOperator, RangeFilterSpec };
+
 export type CellValue = string | number | boolean | null;
 
 export interface FormatSpec {
@@ -206,6 +210,13 @@ export interface CreateTableAction {
   style?: string;
 }
 
+/** Undoes CREATE_TABLE: unwraps the Excel Table object back to a plain range, leaving cell values/formats untouched (TASKS.md #16). */
+export interface DeleteTableAction {
+  type: 'DELETE_TABLE';
+  sheetName: string;
+  tableName: string;
+}
+
 export interface CreateChartAction {
   type: 'CREATE_CHART';
   sheetName: string;
@@ -228,6 +239,23 @@ export interface UpdateChartAction {
   chartId: string;
   chartType?: string;
   colorScheme?: 'default' | 'blue' | 'grey' | 'blueGrey' | 'green' | 'red' | 'orange' | 'purple' | 'yellow';
+}
+
+/**
+ * Revert-only inverse of a `CREATE_CHART` create (TASKS.md #15) — never
+ * advertised to the Executor (see `action-catalog.ts`'s `advertise: false`).
+ * `chartId` is the real Office.js-assigned chart name, only knowable after
+ * the original create actually ran (`handleCreateChart`'s apply-time
+ * read-back of `chart.name`, reported to the backend on accept and patched
+ * into `ChangeSet.structuralOps` before the inverse is built) — the same
+ * apply-endpoint contract mechanism TASKS.md #40 built first for
+ * `DeleteConditionalFormatAction`. Dispatched via Office.js
+ * `Worksheet.charts.getItem(chartId).delete()`.
+ */
+export interface DeleteChartAction {
+  type: 'DELETE_CHART';
+  sheetName: string;
+  chartId: string;
 }
 
 export interface AggregateTableAggregation {
@@ -285,23 +313,6 @@ export interface ClarifyAction {
 export interface CheckpointAction {
   type: 'CHECKPOINT';
   message: string;
-}
-
-export type RangeFilterOperator =
-  | 'equals'
-  | 'contains'
-  | 'greaterThan'
-  | 'lessThan'
-  | 'notEquals'
-  | 'lengthEquals'
-  | 'lengthNotEquals'
-  | 'matchesRegex'
-  | 'notMatchesRegex';
-
-export interface RangeFilterSpec {
-  column: string;
-  operator: RangeFilterOperator;
-  value: string | number;
 }
 
 export interface CopyFilteredRangeAction {
@@ -462,6 +473,124 @@ export interface DeleteCommentAction {
   address: string;
 }
 
+/** Excel's own cell-value conditional-format comparison operators (Office.js `ConditionalCellValueOperator`). */
+export type ConditionalFormatOperator =
+  | 'greaterThan'
+  | 'greaterThanOrEqual'
+  | 'lessThan'
+  | 'lessThanOrEqual'
+  | 'equalTo'
+  | 'notEqualTo'
+  | 'between'
+  | 'notBetween';
+
+/**
+ * `kind` is a discriminant so later rule shapes (formula-driven, top/bottom-N,
+ * color-scale — TASKS.md M3 #35-37) extend `ConditionalFormatRule` as a union
+ * without touching this variant. Comparison-only for now, per #32's scope.
+ */
+export interface ConditionalFormatCellValueRule {
+  kind: 'cellValue';
+  operator: ConditionalFormatOperator;
+  value: number | string;
+  /** Required when operator is 'between' / 'notBetween'. */
+  value2?: number | string;
+  format: FormatSpec;
+}
+
+/**
+ * A boolean Excel formula, evaluated relative to the top-left cell of `range`
+ * for every cell in it — e.g. `"=$C2<$B2*0.9"` to highlight a row where
+ * column C has dropped more than 10% below column B. This is the variant
+ * VISION.md's own headline example needs ("highlight the regions where
+ * revenue dropped more than 10%") — a single-column numeric threshold
+ * (`ConditionalFormatCellValueRule`) cannot express a cross-column
+ * comparison. Dispatched via Office.js `Range.conditionalFormats.add('Custom')`.
+ */
+export interface ConditionalFormatFormulaRule {
+  kind: 'formula';
+  formula: string;
+  format: FormatSpec;
+}
+
+/**
+ * Highlights the top or bottom N items (or N%) of `range` by value — e.g.
+ * "highlight the top 5 suppliers by total". Excel's own rank-based rule,
+ * distinct from cellValue (fixed threshold) and formula (cross-column) —
+ * it re-ranks live as values change, including a new row entering the top/
+ * bottom set (TASKS.md #36). Dispatched via Office.js
+ * `Range.conditionalFormats.add('TopBottom')`.
+ */
+export interface ConditionalFormatTopBottomRule {
+  kind: 'topBottom';
+  side: 'top' | 'bottom';
+  /** Item count by default; a 0-100 percentage when `isPercent` is true. */
+  rank: number;
+  isPercent?: boolean;
+  format: FormatSpec;
+}
+
+/**
+ * A 2- or 3-color gradient scale across `range`'s values — e.g. "color-scale
+ * the Total Amount column". Unlike the other rule kinds, there is no single
+ * `format` (no bold/fill toggle) — each stop in `colors` supplies its own
+ * color directly, matching Office.js `ConditionalColorScaleCriteria`. The
+ * lowest/highest actual values in the range anchor the scale's ends and
+ * shift automatically as data changes — no percentile/fixed-value stops are
+ * exposed here (TASKS.md #37). Dispatched via Office.js
+ * `Range.conditionalFormats.add('ColorScale')`.
+ */
+export interface ConditionalFormatColorScaleRule {
+  kind: 'colorScale';
+  /** [min, max] for a 2-color scale, or [min, mid, max] for a 3-color scale. */
+  colors: [string, string] | [string, string, string];
+}
+
+export type ConditionalFormatRule =
+  | ConditionalFormatCellValueRule
+  | ConditionalFormatFormulaRule
+  | ConditionalFormatTopBottomRule
+  | ConditionalFormatColorScaleRule;
+
+/**
+ * A live, re-evaluating Excel conditional-formatting rule (PRD M7) — distinct
+ * from HIGHLIGHT_CELL/FORMAT_MATCHING_ROWS, which compute a one-shot static
+ * fill that goes stale the moment underlying data changes. Dispatched via
+ * Office.js `Range.conditionalFormats.add('CellValue' | 'Custom')` — TASKS.md #34/#35.
+ */
+export interface ConditionalFormatAction {
+  type: 'CONDITIONAL_FORMAT';
+  sheetName: string;
+  range: string;
+  rule: ConditionalFormatRule;
+  /**
+   * When set, targets an existing rule read back into context (`id` from
+   * `WorkbookContext.conditionalFormats`, TASKS.md #38) — the rule's
+   * parameters are updated in place (`ConditionalFormat.set()`, resolved via
+   * `Range.conditionalFormats.getItem(id)`) instead of adding a new one.
+   * `rule.kind` must match the existing rule's own kind; a modify request
+   * that changes kind is unsupported and should fall back to a plain create.
+   */
+  existingRuleId?: string;
+}
+
+/**
+ * Revert-only inverse of a `CONDITIONAL_FORMAT` create (TASKS.md #40) —
+ * never advertised to the Executor (see `action-catalog.ts`'s `advertise:
+ * false`). `ruleId` is the real Excel-assigned id, only knowable after the
+ * original create actually ran (captured via `handleConditionalFormat`'s
+ * apply-time id read-back, reported to the backend on accept, and patched
+ * into `ChangeSet.structuralOps` before the inverse is built — see
+ * `ARCHITECTURE.md`'s note on this being the same apply-endpoint contract
+ * gap `CREATE_CHART` (#15) hit first). Dispatched via Office.js
+ * `Range.conditionalFormats.getItem(ruleId).delete()`.
+ */
+export interface DeleteConditionalFormatAction {
+  type: 'DELETE_CONDITIONAL_FORMAT';
+  sheetName: string;
+  ruleId: string;
+}
+
 export type RichAction =
   | SetCellAction
   | SetFormulaAction
@@ -484,8 +613,10 @@ export type RichAction =
   | RenameSheetAction
   | CopySheetAction
   | CreateTableAction
+  | DeleteTableAction
   | CreateChartAction
   | UpdateChartAction
+  | DeleteChartAction
   | AggregateTableAction
   | DefineNamedRangeAction
   | AutoFitColumnsAction
@@ -513,4 +644,6 @@ export type RichAction =
   | ShowSheetAction
   | SetSheetColorAction
   | AddCommentAction
-  | DeleteCommentAction;
+  | DeleteCommentAction
+  | ConditionalFormatAction
+  | DeleteConditionalFormatAction;

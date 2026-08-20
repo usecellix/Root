@@ -63,6 +63,11 @@ Owned by `audit/schemas/change-set.schema.ts`. **No TTL.** This is the collectio
 | `beforeState` | `Record<string, CellSnapshot>` (`Mixed`) | Keyed by cell address. Each `CellSnapshot`: `{ value: unknown, formula: string (default ''), format: string (default 'General') }`. |
 | `changes` | `CellChange[]` | See below. |
 | `actions` | `Record<string, unknown>[]` (`Mixed`) | The raw actions that were applied — the only place today that could recover a structural action's parameters (e.g. a created chart's `chartId`) after the fact. |
+| `structuralOps` | `StructuralOp[]`, default `[]` | **Implemented, TASKS.md #12–17.** See §5.2 — this table predates that work landing; kept here as a pointer rather than duplicating §5.2's own field list. |
+| `irreversibleActionTypes` | `string[]`, default `[]` | **Implemented, TASKS.md #18.** Distinct action types in this change set with no defined revert path today. |
+| `workbookId` | `string?`, indexed | **Implemented, TASKS.md #22–24.** See §6.1 — resolved from the originating conversation at preview time. |
+| `unintendedChanges` | `CellChange[]`, default `[]` | **Implemented, TASKS.md #48.** PRD A5 signal — cell changes on a sheet no action in the batch declared touching (sheet-granularity scope, derived from each action's own `sheetName`). Empty is the expected/common case. |
+| `formulaErrorsIntroduced` | `{ cell, sheet, error }[]`, default `[]` | **Implemented, TASKS.md #49.** PRD A6 signal — Excel error strings this change set introduced, distinct from any pre-existing error already sitting in the sheet. Computed additively in `ChangeSetService.createPreview()` from the same before/after shadow pair and diff it already builds — no new shadow simulation, tier-agnostic across Tier 0–3. |
 | `status` | `'previewed' \| 'applied' \| 'reverted'`, default `'previewed'` | |
 | `appliedAt` | `Date?` | |
 | `revertedAt` | `Date?` | |
@@ -299,6 +304,7 @@ Mirrors `ARCHITECTURE.md` §7 but scoped strictly to data, not code/behavior.
 | Using `CellSnapshot.format` in the inverse builder (§5.1) | **Not a schema change at all** | The field already exists; only consuming code changes. |
 | `checkpoints` collection (§6.2) | **Additive** | New collection; nothing existing references it, so nothing existing can break. |
 | `workbookId` on `conversations`/`change_sets`/`workflow_traces` (§6.1) | **Additive at the field level; a real compatibility decision in practice** | New optional field, but requires deciding how pre-existing documents (permanently missing this field) are treated — proposed answer: they keep working via their existing `conversationId`-keyed path, unchanged, forever. Nothing forces a backfill because nothing *can* be backfilled correctly. |
+| `ChangeSet.unintendedChanges` / `formulaErrorsIntroduced` (TASKS.md #48/#49) | **Additive** | Two new default-`[]` array fields; a change set written before this work simply reads back with both empty, same `?? []` pattern already established for `structuralOps`/`irreversibleActionTypes`. |
 | Deleting `src/actions/action.types.ts` (backend, not this database) | **Out of scope of this document** — see `ARCHITECTURE.md` §7.3 | Not a database change; listed there, not repeated here. |
 
 **No proposal in this document requires altering an existing collection's field types, renaming an existing field, or deleting data.** Every addition is a new optional field or a new collection. The actual cost of this work is in the service-layer code that populates and consumes these fields (the inverse-builder extension, the restore algorithm, the frontend's `workbookId` minting) — not in migrating what's already stored.
