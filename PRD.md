@@ -134,8 +134,16 @@ Generated changes are treated as unsafe until checked. Verification covers compl
 - **A response of "Done!" is not success unless verification passed.** This is the single hardest rule in the product (`VISION.md`, *Reliability Is a Core Feature*).
 - Verification failure that cannot be repaired must be reported as partial completion, naming what failed.
 - Dry-run against the shadow workbook before Office.js apply, so a failing plan never touches the real workbook.
+- **Post-apply outcome check (added Aug 26 2026).** After a change set is applied, the affected cells must be read back and compared against the change set's own recorded `after` values; any divergence is reported to the user rather than being absorbed silently. Everything above this line verifies *intent* — the plan, the actions, the pre-write state. None of it can observe what the workbook actually became.
+- **A function that can refuse, truncate, or partially fail must have a return type that can express it.** A `void` return or a bare `string` cannot, and the result is indistinguishable from success at the call site. This is a requirement, not a style note: it is the shared root cause of the defects in `TASKS.md` #80 and #82.
 
 **Acceptance.** Tier A metric `false_success_rate` = 0% (§6.1). No exceptions — this gates launch.
+
+**Status note (Aug 26 2026).** This feature was marked `Exists`; the Aug 25–26 competitor study (`COMPETITIVE_STUDY_SHORTCUT.md`) shows the existing verification cannot deliver its own acceptance metric, and the honest status is closer to `Partial`. Two independent reasons:
+1. **Circular completeness check.** `CompletenessChecker` compares emitted actions against `estimatedActions` — a number produced by the same plan it is verifying. When the Planner under-plans, the plan verifies as complete *by construction*. Observed live: a token-truncated plan silently lost its final subtasks and passed with `fallback: false, retried: false` (#82).
+2. **No outcome verification.** Nothing reads the workbook back after apply. Three separate user-visible failures in the study were invisible to action-level checking — a sheet created under the wrong name, an Accept that applied nothing, and a sort that destroyed date formats. Each would have been caught by comparing actual post-write cells to expected ones.
+
+The machinery is largely present and unwired: `ChangeSetService` already captures before/after diffs, and `shadowWorkbook.ts` already models expected post-write state. See `CODEBASE_ANALYSIS.md` §3.15 for the gap analysis and the open scoping question (all writes vs. Tier 3 only; blocking vs. advisory).
 
 ---
 
@@ -228,6 +236,8 @@ After execution the user is told: what changed, where, what was created, what wa
 - Assumptions are stated explicitly — this is what makes M9's inference-by-default safe.
 - Unresolved issues are surfaced, never omitted to make the summary read cleanly.
 - Changed locations are specific enough to navigate to.
+- **Undoing the change just made is reachable from where it happened**, not only from a separate history surface. Reverting the most recent applied change is the overwhelmingly common case and should not require opening a panel and locating its top entry. *(Implemented Aug 26 2026: `LastChangeRevert` renders inline at the end of the conversation, showing the latest applied change set and a Revert control; the full per-entry history, source citations, and older reverts remain in `ChangeHistoryPanel` behind the composer's history icon.)*
+- A revert control must only be offered for a change set that is actually revertable — never for one already reverted (which would re-apply it) or one never applied. A failed revert reports the failure; it does not quietly leave the row unchanged (M4's return-type requirement applies here too).
 
 ---
 
@@ -411,6 +421,14 @@ The defensible wedge is narrower and more specific: **Microsoft has documented i
 **Rows is the most instructive entry here, precisely because it lost.** It asked users to leave Excel for a better spreadsheet — and 2.2M users were not enough to sustain it. **This is direct evidence for D1.** The task-pane decision is not merely a scoping convenience; it avoids the migration demand that a well-funded, well-built competitor could not overcome. Worth reflecting in `VISION.md` if the file-generation roadmap ever tempts a pivot toward being a destination rather than an add-in.
 
 **Shortcut validates the category and hands us a pricing opening.** Its credit model is its softest point: unpredictable consumption plus a mid-subscription reduction is precisely how a finance-tooling vendor loses finance buyers, who budget. A predictable model — flat seat price, or credits with a published per-task cost — is a real differentiator against the closest competitor, and cheap to deliver.
+
+**Head-to-head evidence (Aug 25–26 2026) — the reliability differentiator is not yet earned.** `COMPETITIVE_STUDY_SHORTCUT.md` runs identical prompts through both tools with full transcripts. The uncomfortable result: **Shortcut made more mistakes than Cellix on the same task and still delivered a working workbook.** It overwrote its own formulas three times and misapplied column-width units — then caught and repaired each one, because after every step it read back what it had just done (re-reading ranges, screenshotting the sheet, once exporting the file and inspecting it with openpyxl). Cellix made fewer mistakes with worse outcomes, because nothing inspected the result.
+
+Two consequences for this section's argument:
+1. **"Verified reliability" is currently the claim, not the product.** Cellix verifies plans and actions thoroughly and never verifies outcomes (`CODEBASE_ANALYSIS.md` §3.15). Selling reliability against Shortcut requires closing that gap first; on the evidence available today the claim would not survive a head-to-head trial run by a prospect.
+2. **The differentiator is available and cheap.** Shortcut's self-correction is visible, slow, and expensive — 10+ accept-gated rounds with the user watching it debug itself. Cellix's batched preview/accept is a genuinely better shape *when it works*. Outcome verification plus honest partial-failure reporting would give the same reliability with far less user-visible thrash — which is a sharper pitch than "we validate more before writing."
+
+This does not weaken the pricing opening above; it relocates the work needed to justify it.
 
 **Numerous sets a price floor but not a comparison.** It answers "put AI in a cell." Cellix answers "operate the workbook." Cite it only to show the category's low end; a buyer weighing Numerous against Cellix has misunderstood one of them.
 

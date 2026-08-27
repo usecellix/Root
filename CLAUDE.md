@@ -136,12 +136,19 @@ Three modes: `ask` | `plan` | `action` (aka `act`). Persisted per workbook in `l
 - `frontend/src/hooks/useConversation` — SSE handling, `plan_only`, `select_cell` → `navigateToCell`
 - `frontend/src/engine/` — `RichActionEngine`, `overwriteGuard`, action handlers
 - `frontend/src/context/` — `workbookReader`, TOON compression (reduces token payload for large sheets)
+- `frontend/src/services/formatGuard.ts` — number-format preservation around writes. **`preserveNumberFormatsAroundWrite` contains a load-bearing `context.sync()` between the value write and the format restore.** Office.js queues property assignments; without that sync both flush in one batch, Excel's smart-entry re-parses the written cells (a date becomes a locale default) and the same-batch `numberFormat` never takes. Removing it silently reintroduces the `12-09-26` → `120926` bug (TASKS.md #85).
+
+**Three Accept paths, one gating rule.** Accepting a staged action wave is reachable from `ActionResponseCard` (in-conversation), `PreviewSummaryBar` (bottom bar), and `acceptActions` (the hook). All three must honor `isWaveDependencySatisfied` from `frontend/src/utils/actionWaveGating.ts` — enforcing it in only some of them is what caused TASKS.md #80. `acceptActions` returns `Promise<boolean>`: **`false` means refused, and callers must not treat that as applied** (doing so cleared the preview on a refusal, so Accept silently did nothing).
 
 ### Backend Key Entry Points
 - `cellix_backend/src/excel-ai/conversation.controller.ts` — `POST /excel-ai/conversation`
 - `cellix_backend/src/excel-ai/services/conversation.service.ts` — top-level orchestration
 - `cellix_backend/src/excel-ai/services/llm-router.service.ts` — route classification
 - `cellix_backend/src/agents/orchestrator.service.ts` — Tier 3 planner/executor/verifier
+
+**LLM truncation is not self-announcing.** `OpenRouterService.complete()` returns a bare `string`; pass the optional `outcome` out-param to receive `finishReason` and a `truncated` flag. Any caller parsing structured output **must** check it — a model that hits its token cap mid-JSON usually emits the closing brackets anyway, so the result parses cleanly and is silently short. `PlannerAgent` treats truncation exactly like a parse failure (retry, then a larger last-resort budget) for this reason; `normalizePlannerOutput` also logs any malformed subtask it drops rather than quietly shortening the plan. See TASKS.md #82.
+
+**Planner emission order is a token-budget rule, not an execution-order rule.** The "YEARLY MONTHLY LEDGER" prompt block tells the planner to emit Main-sheet subtasks *first* and the 12 repetitive month-sheet subtasks *last*, so a truncation loses regenerable boilerplate rather than the dashboard. This is safe only because `computeExecutionWaves` (`agents/utils/task-graph.util.ts`) schedules purely on `dependsOn` edges and ignores array position — pinned by tests in `test/task-graph.util.spec.ts`. See TASKS.md #83.
 
 ### Logging
 - NDJSON files: `cellix_backend/logs/requests.log`, `planner.log`, `frontend.log` (24h prune)

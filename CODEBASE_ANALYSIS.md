@@ -158,9 +158,26 @@ This pattern — no single boolean derived from "did the actual write operation 
 
 **Update, Aug 20 2026 (TASKS.md #45):** the one instance of this bug class that had no automated regression test at all — spec 22 sub-bug 3, the `handlePreviewAccept` UI-side "no rollback on failed apply" asymmetry from #44 — is now covered by `client/src/taskpane/App.spec.tsx`, the first test to render `App.tsx`. Every instance this section names now has either a passing regression test or a confirmed-fixed-by-reading status; none are open.
 
+**Update, Aug 25–26 2026 (TASKS.md #80, #82; `COMPETITIVE_STUDY_SHORTCUT.md`):** the "none are open" claim above did not hold. A side-by-side prompt study against Shortcut surfaced **two more instances of this exact class**, in code paths the earlier triage never examined — and, importantly, both were *upstream* of the UI, which is why a UI-focused search missed them:
+
+- **#80 (frontend):** `PreviewSummaryBar`'s Accept had no wave-dependency gating (the in-conversation card had it; two of three Accept paths enforced the rule, one did not). `acceptActions` refused a gated wave with a bare `return` — and because it returned `void`, **the refusal was indistinguishable from success to its caller**, which then cleared the preview. Net user-visible effect: click Accept, nothing is written, the card disappears, no error.
+- **#82 (backend):** `OpenRouterService.complete()` returned a bare `string`, discarding the provider's `finishReason`. A Planner run cut off by its token budget still parsed cleanly (the model closes the JSON around what it emitted), so a plan missing its final subtasks passed every downstream check with `fallback: false, retried: false`. A `.filter()` in `normalizePlannerOutput` then dropped the malformed trailing subtask with no logging, silently shortening 16 → 15.
+
+Both fixed and mutation-verified. The through-line matters more than either bug: **this class is not "the UI lies about the write" — it is "a signal that would have revealed incomplete work was discarded before anyone could act on it."** The 2026-08-19/20 framing ("no single boolean derived from did-the-write-succeed") described the symptom at one layer; #80 and #82 are the same defect at the return-type and provider-response layers respectively. This section's original recommendation — *fix once at the state-derivation layer rather than patching call sites* — remains unbuilt, and these two are further evidence for it. A concrete, cheap rule that would have caught both: **a function that can refuse or truncate must not have a return type that cannot express refusal or truncation** (`void`, bare `string`).
+
+Related but distinct, also from the same study: **#85** — sorting destroyed date formats (`12-09-26` → `120926`) because `preserveNumberFormatsAroundWrite` queued the value write and the format restore into the *same* Office.js batch with no `sync()` between them. Not a false-success bug (the write really happened), but the same review lesson: the existing test asserted JS *assignment order* and passed, while the property that actually mattered was *application order*. Worth noting alongside §3.7 because it is another case where a test named for the bug did not test the bug.
+
 ### 3.8 `ask`-route capability gap versus the competitor named in `PRD.md`'s own competitive-landscape section
 
 Spec 23 is a direct, traced side-by-side: for "Tell me about this sheet," Shortcut computes real aggregates (totals, GST breakdown, paid/pending split with amounts, largest supplier) while Cellix's `ask` route returns structural metadata only (row/column count, detected types) — no sums, no group-bys, no ranking — wrapped in a single dense paragraph that leaks internal vocabulary (`"Intent: EXPLAIN"`, raw `detectedType` strings). `PRD.md` §9 (written earlier this session, without knowledge of this internal trace) independently flagged Shortcut as the closest competitor and recommended reliability/safety as the differentiator — this finding says the `ask` route specifically is currently behind on a capability comparison, worth reconciling the two documents on.
+
+**Update, Aug 25–26 2026 — a second, much longer side-by-side now exists: `COMPETITIVE_STUDY_SHORTCUT.md`** (two full write-route trials, complete transcripts from both tools). Its headline finding is *not* a capability gap, and it revises the differentiator framing above:
+
+**Shortcut hit MORE bugs than Cellix on the same task and still shipped a working result.** It clobbered its own formulas three separate times and got column-width units wrong — then caught and repaired every one, because after each step it *read back what it had just done* (re-reading ranges, screenshotting the sheet, at one point exporting the workbook and inspecting it with openpyxl). Cellix's failures were smaller in number and larger in consequence, because nothing looked at the result.
+
+Concretely, this is a **verification-target** difference, not a model-quality one. Cellix's Verifier subsystem is substantial (four checkers, scoped retry) but checks **actions** — did the Executor emit enough actions, of valid types, with required fields — against `estimatedActions` *taken from the same plan being verified*. It never reads the workbook back after apply. Shortcut checks **outcomes**. Every hard failure in the study lived in the gap between those two questions.
+
+This sharpens, rather than contradicts, `PRD.md` §9's "reliability/safety as the differentiator": reliability here is not more validation *before* the write, it is any verification *after* it. That capability does not currently exist anywhere in the pipeline and is the single largest structural gap the study identified. See §3.15.
 
 ### 3.9 Spec-file hygiene — no single authoritative version
 
@@ -194,6 +211,32 @@ Doesn't mention the Workflow-tracing subsystem (§1.5) at all — a real, cross-
 | `Dashboard/` blob-tracked with its own independent `.git`/remote | Fully separate repo, `.gitignore`d from `Root/`, matching the other two rather than being special-cased. Not cloned in this environment, so not independently re-verified this pass. |
 
 This resolves §3.1's "highest severity" finding and §3.2's CI-checkout risk (there's no gitlink for CI to fail to check out anymore) as a side effect of the reorg, not through the fixes originally proposed in TASKS.md #1–3. See TASKS.md M0 for the task-level accounting. **The naming discrepancy (`Server`/`client` vs. README's `cellix_backend`/`frontend`) is a new, small, unresolved gap** — worth deciding one direction (rename the local checkout, or update the README) since at least one cross-repo test (`actionCatalogParity.spec.ts`) now hardcodes a relative path that only works for one naming choice.
+
+**Correction, Aug 26 2026:** on this machine the layout is now `e:\cellix\Cellix-2026\` containing `cellix_backend/`, `frontend/`, `Dashboard/`, `shared/`, `specs/` and the docs — i.e. there is no separate `Root/`, and the directories match `README.md`'s names rather than the `Server/`/`client/` variant above. The naming discrepancy this section flags is therefore **resolved for the backend and frontend paths**. It had, however, left a real casualty: `frontend/src/types/actionCatalogParity.spec.ts` still imported from `../../../Server/src/excel-ai/types/action-catalog`, a path that does not exist under this layout — so **the cross-repo action-type drift detector (TASKS.md #5) had been silently dead**, its failure masked because that file was one of the specs routinely excluded from "tsc clean" checks in recent task write-ups. Repointed to `../../../cellix_backend/...` on Aug 26 2026; it now resolves and passes (2 tests), and the two packages' action unions do currently agree. Worth noting as a small cautionary case: a test that cannot resolve its import fails *silently* in the same way the §3.7 bug class does — the absence of a signal read as the absence of a problem.
+
+### 3.15 No outcome verification — nothing reads the workbook back after apply
+
+**Identified by the Aug 25–26 competitor study (`COMPETITIVE_STUDY_SHORTCUT.md`); the largest structural gap it found, and the only one still unaddressed.**
+
+Cellix verifies **intent** at three points and **outcome** at none:
+
+| Stage | What is checked | Against what |
+|---|---|---|
+| `FormulaValidatorService` | formula text (hardcode lint) | static rules |
+| Verifier checkers (×4) | emitted actions — count, type, required fields | `estimatedActions`, *from the same plan under verification* |
+| `guardAgainstOverwrite` | target-cell occupancy | pre-write sheet state |
+| — | **the workbook after the write** | **nothing** |
+
+The `estimatedActions` circularity is the sharpest edge: when the Planner under-plans (as in #82's truncation, where a 16-subtask plan silently became 15), `CompletenessChecker` compares emitted actions against a number produced by that same truncated plan — so an under-planned request verifies as complete *by construction*. No amount of additional pre-write validation can close that, because the missing information only exists after the write.
+
+Every user-visible failure in the study is invisible to action-level checking and would have been caught by outcome checking:
+- `Main` → `Main 2` — actions well-formed, result wrong.
+- Accept applying nothing — actions valid, nothing landed.
+- Sorting flattening dates — the write succeeded, the *format* did not survive it.
+
+**The machinery for this largely exists already and is unwired for the purpose:** `ChangeSetService` captures before/after cell diffs, and `shadowWorkbook.ts` + `virtualApply.ts` already model expected post-write state for dry runs. The missing piece is a post-apply read-back that compares actual cells against the ChangeSet's own `after` values and surfaces the delta. This is closer to plumbing than to new capability, and it is what let Shortcut ship working output despite hitting more bugs per run (§3.8).
+
+Not yet filed as a numbered task — it needs a scoping decision first (all writes vs. Tier 3 only; blocking vs. advisory), which is the kind of call §4.3 exists for.
 
 ---
 

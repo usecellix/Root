@@ -1,0 +1,37 @@
+Tier 0 — Deterministic (no LLM)
+"Freeze the top row"
+"Delete Sheet2"
+"Clear all formatting on this sheet"
+"Rename this sheet to 'Budget 2026'"
+"Protect this sheet"
+Tier 1 — Single LLM call (simple writes)
+"Add headers: Date, Description, Category, Amount, Balance in row 1"
+"Add a column called 'Notes' after the last column"
+"Bold the header row and add a light blue fill"
+"In A1 put 'Monthly Expense Tracker' and merge A1:E1"
+"Add today's date in B1"
+"Set column A width to fit 'Description'"
+Tier 2 — Generate → Verify (formulas, multi-step but single-purpose)
+"In row 2 through 20, add sample expense data for a household — rent, groceries, utilities, entertainment — with realistic amounts"
+"Add a Total row at the bottom that sums the Amount column"
+"Add a running balance formula in column E starting from a 50000 opening balance"
+"Highlight any expense over 5000 in red text"
+"Add a formula in G1 that shows the average monthly spend per category using SUMIF"
+"Convert this range into a proper Excel Table"
+Tier 3 — Multi-agent (planner/executor/verifier — real "build something" asks)
+"Build me a simple monthly budget tracker: categories in column A (Rent, Groceries, Utilities, Transport, Entertainment, Savings), Budgeted and Actual columns, and a Variance column with conditional formatting — red if over budget, green if under"
+"Create an invoice template: company details at top, a line-items table with Description/Qty/Rate/Amount, auto-calculating subtotal, 18% GST, and grand total"
+"Set up a loan EMI calculator — take principal, rate, and tenure as inputs and calculate EMI using the standard formula, then show an amortization schedule for 12 months"
+"Build a simple P&L statement structure for a small business with Revenue, COGS, Gross Profit, Operating Expenses, and Net Profit, each as a formula rolling up from line items below it"
+"Create a data entry sheet for daily sales across 3 products, then a summary sheet that pulls totals per product using SUMIF, with a bar chart"
+Data query / read-only (test ask/plan modes)
+(Ask mode) "What formulas are currently in this sheet?"
+(Plan mode) "I want to add a break-even calculator — walk me through what you'd build before doing it"
+"Which cells have hardcoded numbers instead of formulas?"
+Edge cases worth probing
+"Add a column" (deliberately vague — tests the INSERT_COLUMN semantic-shape rule vs. guessed SET_FORMULA)
+Type data into A1 manually first, then: "Put 'Revenue' in A1" (tests guardAgainstOverwrite / OverwriteGuardError without explicitOverwriteConfirmed)
+"Undo that" / "Reject" on a preview (tests Accept/Reject flow)
+Ask two things at once: "Add a budget table AND freeze the header row" (tests routing between Tier 0 shortcut and Tier 2/3 write)
+"Delete everything and start over" (destructive — good test of whether it asks for confirmation before wiping the sheet)
+Want me to trim this into a shorter smoke-test set (5–6 prompts covering one from each tier), or turn it into a checklist doc you can run through and check off?

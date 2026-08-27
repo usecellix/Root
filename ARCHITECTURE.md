@@ -162,6 +162,18 @@ Each entry: **Decision** → **Why** → **Consequence / Tradeoff** → **Status
 
 **Status: Implemented, with known coverage gaps.** Recommend: audit every `virtualApply.ts` case for an explicit comment (either "simulates X" or "intentionally not simulated because Y") — the uncommented silent fallthroughs are the actual risk, not the documented no-ops.
 
+**Consequence made concrete, Aug 26 2026 (`COMPETITIVE_STUDY_SHORTCUT.md`, `CODEBASE_ANALYSIS.md` §3.15).** AD-3 is sound given AD-1, but it defines a hard ceiling that is easy to forget: **simulation can only ever verify what we predicted, never what actually happened.** Three live failures landed exactly in that blind spot, and none is a `virtualApply.ts` coverage gap of the kind this decision anticipated:
+
+| Failure | Why simulation could not catch it |
+|---|---|
+| `ADD_SHEET "Main"` produced a sheet named `Main 2` | Excel's own name-collision behavior; the simulation applied the action as written |
+| Accept applied nothing | The divergence was entirely frontend-side, after the backend was done |
+| Sort flattened dates (`12-09-26` → `120926`) | Excel's smart-entry re-parsed the values on write; the simulation has no such re-parsing |
+
+The pattern: each is Excel doing something the *model of Excel* does not do. Auditing `virtualApply.ts` cases — the fix this decision already recommends — cannot close these, because the gap is not missing cases but the map/territory distinction itself.
+
+**This does not argue against AD-3.** Pre-write simulation is still the only way to avoid touching the real file with a bad plan, and it stays. What it argues is that AD-3 needs a **complement, not a replacement**: a post-apply read-back on the frontend (the only component with live access, per AD-1) comparing actual cells against the ChangeSet's recorded `after` values. Note this necessarily lives on the *frontend* — AD-1 makes that a structural requirement, not a preference, and it is why the capability was never a natural fit for the backend's verifier subsystem where one might first look for it. See `PRD.md` M4's post-apply requirement and §3.15 for the open scoping question.
+
 ### AD-4 — Two-tier data retention: ephemeral working memory vs. durable audit trail
 
 **Decision (confirmed from schema, not previously documented anywhere):** `conversations` auto-expire 24 hours after creation (`expiresAt`, point-in-time TTL). `change_sets`, `audit_logs`, and `audit_entries` carry **no TTL** — they persist indefinitely once written.
