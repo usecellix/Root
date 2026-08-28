@@ -304,6 +304,28 @@ export interface SortRangeAction {
   columnName?: string;
 }
 
+/**
+ * Revert-only bulk inverse (TASKS.md #100) — never advertised to the
+ * Executor (see `action-catalog.ts`'s `advertise: false`). The fast path for
+ * reverting an action like `SORT_RANGE` that can touch hundreds of cells at
+ * once, where a per-cell `SET_CELL` inverse means hundreds of separate
+ * Office.js round trips. `range` is the bounding rectangle of every changed
+ * cell; `operations` carries only the cells that actually need correcting
+ * (sparse, not every cell in `range`) — the handler reads the range's
+ * current live values in one call, overlays these corrections in memory,
+ * and writes the whole block back in one call, so unlisted cells inside
+ * `range` are left exactly as Excel already has them rather than requiring
+ * the backend to know their value up front. Built by `diff.engine.ts` from a
+ * real captured before-state snapshot, never user/planner-authored.
+ */
+export interface SetRangeValuesAction {
+  type: 'SET_RANGE_VALUES';
+  sheetName: string;
+  range: string;
+  operations: BatchSetOperation[];
+  explicitOverwriteConfirmed?: boolean;
+}
+
 export interface ClarifyAction {
   type: 'CLARIFY';
   question: string;
@@ -621,6 +643,7 @@ export type RichAction =
   | DefineNamedRangeAction
   | AutoFitColumnsAction
   | SortRangeAction
+  | SetRangeValuesAction
   | ClarifyAction
   | CheckpointAction
   | CopyFilteredRangeAction
