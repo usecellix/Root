@@ -27,13 +27,17 @@ This diagram is intentionally sparse — Mongo enforces none of these edges. The
 
 ## 2. Current Collections
 
-### 2.1 `conversations` — session working memory
+### 2.1 `conversations` — session working memory *(now user-scoped durable history — updated Sept 1 2026, TASKS.md #170–171)*
 
 Owned by `excel-ai/schemas/conversation.schema.ts`. One document per conversation (chat session).
+
+> **This collection is no longer "working memory" in the disposable sense this section originally described.** It now backs a user-visible chat-history list (`GET /excel-ai/conversations`), with an owner (`userId`) and a 90-day retention window. The tables and analysis further down this document that treat `conversations` as 24h-ephemeral predate that change — §2.1's rows below are current; §7's retention table and §8.1's open question have been corrected in place, but treat any *other* "expires in 24h" statement here as stale.
 
 | Field | Type | Notes |
 |---|---|---|
 | `conversationId` | `string`, unique, indexed | Public ID, generated per session. **The only correlation key currently in existence for "this workbook" — see AD-4.** |
+| `userId` | `string?`, indexed | **Owner**, resolved server-side from the Better Auth session — never accepted from the request body, since a client-supplied value would let a caller write into and later list another user's history. Optional because pre-#170 documents exist and must not throw; those are invisible to the history list, which is the intended failure mode (under-report rather than leak an unowned conversation into an arbitrary user's list). Backfilled onto an existing conversation the first time its owner resumes it, but never reassigned once set. Compound index `{ userId: 1, updatedAt: -1 }` backs the list query. |
+| `title` | `string?` | First user message, whitespace-collapsed and truncated to 80 chars. Denormalized deliberately so listing conversations never has to load and scan `messages` — that is what keeps the list response small. Set once, never rewritten. Derived on read for pre-#171 documents that have none. |
 | `messages` | `ConversationMessageEntry[]` | Embedded subdocuments, `_id: false`. |
 | `messages[].id` | `string` | |
 | `messages[].role` | `'user' \| 'assistant'` | |
@@ -45,7 +49,7 @@ Owned by `excel-ai/schemas/conversation.schema.ts`. One document per conversatio
 | `lastSheetHash` | `string?` | Hash of the last TOON-compressed payload — `ContextCacheService` uses this to skip re-analysis when the sheet hasn't changed. |
 | `cachedPromptContext` | `string?` | Cached `SheetAnalyzer` output, valid only while `lastSheetHash` still matches. |
 | `status` | `'active' \| 'completed' \| 'error'`, default `'active'` | |
-| `expiresAt` | `Date`, default `now + 24h` | **TTL field**, `expireAfterSeconds: 0` — Mongo expires the document at this exact timestamp, not relative to it. Whether `expiresAt` is refreshed on each new turn (extending the session) or fixed at creation was **not verified in this pass** — check `conversation.service.ts` before assuming either. |
+| `expiresAt` | `Date`, default `now + 90d` (`CONVERSATION_TTL_MS`, overridable via `CONVERSATION_TTL_HOURS`) | **TTL field**, `expireAfterSeconds: 0` — Mongo expires the document at this exact timestamp, not relative to it. **Refresh behavior, now verified** (this was §8.1's open question): `saveMessage` rewrites `expiresAt` on every stored message, so the window is 90 days of *inactivity*, not 90 days from creation. **Correction to this document's earlier claim of 24h:** the schema default was 24h but `conversation.service.ts` overrode it on every create with `CONVERSATION_TTL_HOURS ?? 168`, so the real retention was 7 days and the schema default was dead code. Both now import one exported `CONVERSATION_TTL_MS` from the schema, so the default and the per-save refresh cannot drift apart again. |
 
 Auto `timestamps: true` → also carries `createdAt`/`updatedAt`.
 
@@ -210,7 +214,7 @@ Owned by `common/logging/schemas/frontend-log.schema.ts`. **3-day TTL** on `ts`.
 
 | Tier | Collections | Retention | Rationale (see `ARCHITECTURE.md` AD-4) |
 |---|---|---|---|
-| **Ephemeral working memory** | `conversations` | 24h from creation (refresh-on-update unverified) | Chat/session state — fine to lose. |
+| ~~**Ephemeral working memory**~~ → **User-visible history** | `conversations` | **90 days from last activity** (`expiresAt` refreshed on every saved message — verified, TASKS.md #170) | No longer "fine to lose": this now backs a user-facing chat-history list. Time-boxed rather than unbounded, deliberately matching the "durable but not unbounded" middle ground rather than repeating the untTL'd pattern the durable-audit row below flags. *(Previously listed as "24h from creation" — that was never what ran; see §2.1's `expiresAt` note.)* |
 | **Ephemeral operational logs** | `request_logs`, `planner_logs`, `frontend_logs`, `workflow_traces` | 3 days | Debugging/observability, not the record of what happened to the user's data. |
 | **Durable audit trail** | `change_sets`, `audit_logs`, `audit_entries` | **Unbounded — no TTL** | The actual record of modifications to user files, and LLM cost/compliance data. Whether "unbounded" was a deliberate choice or an oversight is `ARCHITECTURE.md` §8 Q1 — flagged, not assumed either way. |
 | **Externally managed** | `user`, `session`, `account`, `verification` (better-auth) | Governed by `better-auth`'s own config, not this schema | |
@@ -223,7 +227,8 @@ Three independent keys are in play, at three different granularities, and nothin
 
 | Key | Granularity | Present on | Survives 24h? |
 |---|---|---|---|
-| `conversationId` | One chat session | `conversations`, `change_sets`, `workflow_traces`, `frontend_logs` | **No** — the *owning* `conversations` document expires; documents in other collections that reference it do not, becoming effectively orphaned references. |
+| `userId` | One person, across every conversation and device *(added Sept 1 2026, TASKS.md #170)* | `conversations` | Yes, for 90 days of inactivity. The first key that answers "what has **this user** done", as opposed to this session or this change. |
+| `conversationId` | One chat session | `conversations`, `change_sets`, `workflow_traces`, `frontend_logs` | **Yes now, for 90 days** (was 24h per the schema default / 7d per what actually ran). The orphaned-reference problem this row described is correspondingly narrower but not gone: `change_sets` still outlives `conversations`, so a reference can still dangle — it just takes 90 days instead of one. |
 | `traceId` / `correlationId` | One HTTP request / one agent call | `change_sets.traceId`, `audit_logs.traceId`, `request_logs.traceId`, `workflow_traces.traceId`, `planner_logs.correlationId` | N/A — request-scoped by nature, not meant to persist as a lookup key beyond debugging one request. |
 | `changeSetId` | One applied/previewed modification | `change_sets.changeSetId`, `workflow_traces.changeSetId`, `frontend_logs.changeSetId`, embedded in `conversations.messages[].metadata.changeSetId` | Yes — `change_sets` itself has no TTL, so this key is durable. **This is the only currently-durable cross-collection key in the schema.** |
 
@@ -315,7 +320,7 @@ Mirrors `ARCHITECTURE.md` §7 but scoped strictly to data, not code/behavior.
 
 Distinct from `ARCHITECTURE.md` §8 — schema-specific follow-ups.
 
-1. **`conversations.expiresAt` refresh behavior** (§2.1) — is it renewed on each new turn (a rolling 24h window from last activity) or fixed at document creation (a hard 24h-from-first-message cutoff)? This materially changes how often real, in-progress sessions actually hit the TTL — worth confirming directly in `conversation.service.ts` before relying on either assumption elsewhere.
+1. ~~**`conversations.expiresAt` refresh behavior** (§2.1)~~ — **✅ Answered Sept 1 2026 (TASKS.md #170).** It is **renewed on every saved message** (`ConversationService.saveMessage` sets `expiresAt` alongside the `$push`), so the window is rolling-from-last-activity, not fixed-from-creation. Answering it turned up something this question didn't anticipate: the window itself was neither of the two candidate values. The schema declared 24h, the service wrote `CONVERSATION_TTL_HOURS ?? 168` on create, so real retention was **7 days** and the schema default never applied. Both sides now import one exported `CONVERSATION_TTL_MS` (90 days). *Generalizable lesson for this document: when a field's behavior is "unverified", the possibility that neither documented value is the live one deserves as much weight as choosing between them.*
 2. **`audit_logs`/`audit_entries` retention** — carried over from `ARCHITECTURE.md` §8 Q1, restated here because it's the schema itself that needs the index added, if the answer is "yes, these should expire too."
 3. **`workbookId` minting mechanics** — Office.js `document.settings` is proposed as the storage mechanism because it survives file close/reopen, but its size limits and multi-device-sync behavior (what happens if the same .xlsx is opened on two machines?) weren't investigated in this pass. Worth a short spike before committing to it as the sole mechanism.
 4. **Better-auth collection documentation** — should this document (or a linked one) capture the actual field-level shape of `user`/`session`/`account`/`verification` once inspected, so a future schema change doesn't have to rediscover them from the adapter source? Not done here since it's vendor-managed and out of this pass's scope, but the gap is worth naming rather than leaving silent.

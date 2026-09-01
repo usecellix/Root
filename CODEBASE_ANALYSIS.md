@@ -244,6 +244,17 @@ This resolves §3.1's "highest severity" finding and §3.2's CI-checkout risk (t
 
 **Correction, Aug 26 2026:** on this machine the layout is now `e:\cellix\Cellix-2026\` containing `cellix_backend/`, `frontend/`, `Dashboard/`, `shared/`, `specs/` and the docs — i.e. there is no separate `Root/`, and the directories match `README.md`'s names rather than the `Server/`/`client/` variant above. The naming discrepancy this section flags is therefore **resolved for the backend and frontend paths**. It had, however, left a real casualty: `frontend/src/types/actionCatalogParity.spec.ts` still imported from `../../../Server/src/excel-ai/types/action-catalog`, a path that does not exist under this layout — so **the cross-repo action-type drift detector (TASKS.md #5) had been silently dead**, its failure masked because that file was one of the specs routinely excluded from "tsc clean" checks in recent task write-ups. Repointed to `../../../cellix_backend/...` on Aug 26 2026; it now resolves and passes (2 tests), and the two packages' action unions do currently agree. Worth noting as a small cautionary case: a test that cannot resolve its import fails *silently* in the same way the §3.7 bug class does — the absence of a signal read as the absence of a problem.
 
+**Third and fourth instances, Sept 1 2026 (TASKS.md #175, #176).** The `Root/`-era path rot was not limited to that one spec. Two more files still carried pre-reorg paths, and both had been failing continuously without anyone treating the failure as a signal:
+
+| File | Stale path | Should be | Consequence |
+|---|---|---|---|
+| `frontend/src/action.types.ts` | `../../Root/shared/action.types` | `../../shared/action.types` | `npm run build` (`tsc && vite build`) exited **2**, so `vite build` never ran and `frontend/dist/` was **stale since July 21**. `tsc --noEmit` reported **72 errors**. |
+| `cellix_backend/test/telemetry-category-parity.spec.ts` | `../../client/src/services/frontendTelemetry.ts` | `../../frontend/src/...` | 3 tests failing with `ENOENT` on every run — the TASKS.md #159 telemetry drift detector was dead. |
+
+Both were one-line fixes; together they took the repo from "72 frontend type errors + 3 backend failures, all normalized as background noise" to **frontend `tsc` clean / `npm run build` exit 0 / 352 tests passing, backend 1080/1080 across 125 suites**.
+
+The instructive part is *how they survived*. Each had been explicitly written up in prior sessions as a known-benign baseline — the 72 errors as the number to compare against when checking "did I add a type error", the 3 failures as "pre-existing unrelated failures in `telemetry-category-parity.spec.ts`" in the acceptance notes of #161, #163, and #168. Once a failing check is described in the docs as expected, it stops being read as a failure, and its diagnostic value goes to zero: a 73-error run is indistinguishable from a 72-error one at a glance, and a fourth telemetry failure would have been absorbed into the same sentence. **A tolerated red check is worse than a missing one** — it occupies the slot where a real signal would go. The §3.14 lesson generalizes past import paths: whenever a task write-up here says "pre-existing, unrelated", that claim is worth spending five minutes actually verifying rather than inheriting.
+
 ### 3.15 ~~No outcome verification~~ — CLOSED Aug 30 2026 (TASKS.md #150)
 
 > **Status: closed.** `client/src/services/outcomeVerifier.ts` now reads the workbook back after every apply and compares against the ChangeSet's recorded `after` values. See the update note at the end of §3.8 for what it does and does not cover. The original analysis below is retained because its framing — intent verified at three points, outcome at none — is what identified the gap.
@@ -271,6 +282,29 @@ Every user-visible failure in the study is invisible to action-level checking an
 **The machinery for this largely exists already and is unwired for the purpose:** `ChangeSetService` captures before/after cell diffs, and `shadowWorkbook.ts` + `virtualApply.ts` already model expected post-write state for dry runs. The missing piece is a post-apply read-back that compares actual cells against the ChangeSet's own `after` values and surfaces the delta. This is closer to plumbing than to new capability, and it is what let Shortcut ship working output despite hitting more bugs per run (§3.8).
 
 Not yet filed as a numbered task — it needs a scoping decision first (all writes vs. Tier 3 only; blocking vs. advisory), which is the kind of call §4.3 exists for.
+
+### 3.16 Conversation history is now user-scoped and server-backed — Sept 1 2026 (TASKS.md #170–172)
+
+Before this, "chat history" meant `localStorage` only: `chatSessionStorage.ts` persisted open `ChatSession` tabs per workbook, keyed by workbook *name*, in one browser. Signing in on another machine, or clearing site data, lost everything. The `conversations` collection did hold full per-turn message content server-side, but had **no `userId`** — only a frontend-minted `conversationId` and (post-AD-9) an optional `workbookId` — so there was no query that could answer "what has this user asked before". `AuthGuard` gated *access* to the endpoint while nothing tied a stored conversation to who had it.
+
+What changed:
+
+| Layer | Change |
+|---|---|
+| `conversation.schema.ts` | `userId?` (indexed) + denormalized `title?`; compound `{ userId: 1, updatedAt: -1 }` index; exported `CONVERSATION_TTL_MS`, now 90 days |
+| `conversation.service.ts` | `listConversations(userId, {limit, cursor, workbookId})`; ownership checks on `getConversation` and `getOrCreateConversation`; title set from the first user message |
+| `conversation.controller.ts` | `GET /excel-ai/conversations`; `userId` sourced from `@Session()`, never the request body |
+| `frontend` | `conversationHistoryService.ts`, `conversationHistoryGrouping.ts`, `useConversation.openConversationFromHistory`, and `PanelHeader`'s existing history menu repointed from local tabs to the server |
+
+Three details worth carrying forward, because each encodes a decision rather than a mechanism:
+
+1. **`userId` is a function parameter, not a DTO field.** `handleConversation(request, reply, traceId, userId)` takes the owner from the authenticated session. Accepting it in `ConversationRequestDto` would have been less plumbing and would have let any caller write into — and subsequently list — another user's history. The same reasoning makes `getConversation`'s ownership mismatch return `NotFound` rather than `Forbidden`: `Forbidden` confirms that a guessed conversationId exists.
+
+2. **The TTL had already drifted, invisibly.** The schema declared 24h; the service wrote `CONVERSATION_TTL_HOURS ?? 168` on every create. So the schema default was dead code and real retention was 7 days — neither number matching what any doc claimed. Both sides now import one exported constant. This is `ARCHITECTURE.md` AD-7's duplicate-definition pattern in a fifth place, and it is the reason to prefer one exported constant over two agreeing literals even when they currently agree.
+
+3. **The frontend needed no new panel.** `PanelHeader.tsx` already had a chat-history dropdown — search box, `Today` heading, an `Archived` button that did nothing — listing the open localStorage tabs. It *looked* like the feature existed. Building a second history UI beside it was the obvious-but-wrong move; the work was repointing the existing one at the server. Worth checking for this shape generally: this codebase has more built-but-unwired UI than its docs suggest (cf. the `AuthGuard`/`AuthGate` go-live gap, where both sides existed and neither was connected).
+
+**Still open:** #172's manual golden-path run (log in → converse → re-login → reopen from history) is unverified — the route sits behind Google OAuth and cannot be exercised from a terminal. And #173 (global vs. `workbookId`-scoped history) is a product decision, not an engineering one; the list ships global, matching ChatGPT/Cursor, with the `workbookId` filter already accepted server-side so answering it the other way is a caller change rather than a query rewrite.
 
 ---
 
