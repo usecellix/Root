@@ -9,6 +9,8 @@ export interface FormatSpec {
   italic?: boolean;
   underline?: boolean;
   fontSize?: number;
+  /** Font family, e.g. 'Aptos Narrow'. TASKS.md #169. */
+  fontName?: string;
   fontColor?: string;
   fillColor?: string;
   /** When true, remove background fill from the range (leaves font/borders intact). */
@@ -281,11 +283,49 @@ export interface AggregateTableAction {
   explicitOverwriteConfirmed?: boolean;
 }
 
+/** DATA_VALIDATION rule spec. Mirrors the server's DataValidationSpec. TASKS.md #166. */
+export interface DataValidationSpec {
+  kind: 'list' | 'decimal' | 'wholeNumber' | 'date' | 'textLength';
+  /** kind: 'list' — literal values, OR a range reference like `Lists!$B$3:$B$9`. */
+  listSource?: string[] | string;
+  operator?:
+    | 'between'
+    | 'notBetween'
+    | 'equalTo'
+    | 'notEqualTo'
+    | 'greaterThan'
+    | 'lessThan'
+    | 'greaterThanOrEqualTo'
+    | 'lessThanOrEqualTo';
+  formula1?: string | number;
+  formula2?: string | number;
+  promptTitle?: string;
+  promptMessage?: string;
+  errorTitle?: string;
+  errorMessage?: string;
+  errorStyle?: 'stop' | 'warning' | 'information';
+  ignoreBlanks?: boolean;
+}
+
+export interface DataValidationAction {
+  type: 'DATA_VALIDATION';
+  sheetName: string;
+  range: string;
+  validation: DataValidationSpec;
+}
+
 export interface DefineNamedRangeAction {
   type: 'DEFINE_NAMED_RANGE';
   name: string;
   formula: string;
   comment?: string;
+}
+
+export interface HideGridlinesAction {
+  type: 'HIDE_GRIDLINES';
+  sheetName: string;
+  /** false restores gridlines; defaults to true (hide). */
+  showGridlines?: boolean;
 }
 
 export interface AutoFitColumnsAction {
@@ -640,7 +680,9 @@ export type RichAction =
   | UpdateChartAction
   | DeleteChartAction
   | AggregateTableAction
+  | DataValidationAction
   | DefineNamedRangeAction
+  | HideGridlinesAction
   | AutoFitColumnsAction
   | SortRangeAction
   | SetRangeValuesAction
