@@ -2,7 +2,7 @@
 
 > Companion to `ARCHITECTURE.md` (system design), `DATABASE_SCHEMA.md` (schema detail — see `CREDIT_SYSTEM_SCHEMA.md` for this feature's additions), and `cellix-pricing-v3.html` (the business/pricing model this document implements). Where the pricing doc states a number or a rule, this document does not re-derive it — it says how the system enforces it.
 >
-> *Drafted: September 4, 2026. Status: Proposed — no code written yet. Scoped as a first PR (credit accounts, ledger, gate check, debit hook) with Stripe billing integration as an explicit follow-up (§7).*
+> *Drafted: September 4, 2026. Status: mostly built. See TASKS.md #179/#180/#181/#188/credit-system-v2 for what actually shipped, in order — including the 2026-09-10 "credit-system-v2" pass that re-priced the catalog around real GLM model costs, added a Beta tier, added Tier 3 metering, and migrated the payment layer from Stripe to Razorpay (the original intent this doc always had — §7 below now reflects that, not Stripe).*
 
 ---
 
@@ -10,7 +10,9 @@
 
 Every billable action in Cellix has a **fixed credit price**, looked up from a static catalog — not a live conversion of actual LLM token spend — and a request is checked against the caller's credit balance *before* any LLM call is made, with the debit itself firing once, when the action completes.
 
-This is a deliberate simplification relative to a metered-billing model: `audit_logs.estimatedCostUsd` (already captured per LLM call, per `ARCHITECTURE.md` AD-5) remains the signal for **margin monitoring** — are we actually near the ~₹0.35/credit blended COGS the pricing model assumes — but it is not what a user is charged. A user is charged the catalog price for the action they ran, regardless of whether that particular run happened to use more or fewer tokens than average.
+This is a deliberate simplification relative to a metered-billing model: `audit_logs.estimatedCostUsd` (already captured per LLM call, per `ARCHITECTURE.md` AD-5) remains the signal for **margin monitoring** — but it is not what a user is charged. A user is charged the catalog price for the action they ran, regardless of whether that particular run happened to use more or fewer tokens than average.
+
+**Updated 2026-09-10 (credit-system-v2):** the original ~₹0.35/credit blended-COGS assumption above was sized against GPT-5-class model costs. The backend has since switched its default models to GLM (`.env`'s `OPENROUTER_MODEL_LOW/MEDIUM/HIGH`), which is roughly **18.7x cheaper per token** — confirmed by re-deriving the ratio directly from OpenRouter's live pricing (GLM 5.3 Flash ~$0.15/$0.50 per 1M tokens vs. GPT-5's $1.25/$10). The credit allotments below (Free/Beta/Solo) were re-priced around this real cost, not the stale ₹0.35 figure — treat that number as historical context for how the ORIGINAL numbers were chosen, not as today's actual COGS-per-credit.
 
 ---
 
@@ -26,14 +28,14 @@ graph TB
         Gate["CreditGateService<br/>pre-flight balance check"]
         Cat["credit-cost-catalog.ts<br/>action-type -> fixed price"]
         Debit["CreditLedgerService<br/>debit on turn completion"]
-        Tiers["Tier 0-3 (unchanged)"]
-        Stripe["StripeWebhookService<br/>(see §7)"]
+        Tiers["Tier 0-3 (unchanged routing/verification;<br/>Tier 3 gained gate+debit hooks, credit-system-v2)"]
+        Razorpay["RazorpayWebhookService<br/>(see §7 — migrated off Stripe)"]
     end
 
     subgraph Data["MongoDB"]
         Acct[(credit_accounts<br/>per user OR per org)]
         Ledger[(credit_ledger<br/>append-only)]
-        Subs[(subscriptions<br/>Stripe-synced)]
+        Subs[(subscriptions<br/>Razorpay-synced)]
     end
 
     Bal -- "SSE: credits event" --> Client
@@ -44,8 +46,8 @@ graph TB
     Debit --> Cat
     Debit --> Acct
     Debit --> Ledger
-    Stripe --> Acct
-    Stripe --> Subs
+    Razorpay --> Acct
+    Razorpay --> Subs
     Gate --> Acct
 ```
 
@@ -73,6 +75,7 @@ graph TB
 | MIS Dashboard / Report Build | 28 | Highest single-task cost |
 | e-Invoice Validation | 1 | **Per invoice — quantity multiplier, see CD-2** |
 | Bank Reconciliation Assist | 15 | **Unwired — see CD-5** |
+| Tier 3 Agentic Build (multi-sheet, Planner→Executor→Verifier) | 100/subtask | **Added 2026-09-10 (credit-system-v2)** — priced per DELIVERED subtask (see CD-2's per-unit pattern), not a flat price. A real Tier 3 build's token cost is orders of magnitude beyond every other single catalog entry, so it needed its own category rather than reusing one; a large 20-subtask build costs ~2,000 credits. |
 
 **Why:** Predictable pricing is a stated product goal (`cellix-pricing-v3.html`'s "petrol gauge, not a countdown timer" framing) — a user should be able to know in advance what an action costs, which a live token-count-based price cannot offer.
 
@@ -152,7 +155,7 @@ graph TB
 
 1. `planCredits` — resets to the plan's monthly allotment each billing cycle, **does not roll over** (unused credits are lost at cycle end — matches the pricing doc's "intentional breathing room, not banked" framing)
 2. `purchasedCredits` — top-up pack credits, **persist indefinitely**, never expire, unaffected by plan renewal or cancellation
-3. `oneTimeCredits` — the Free tier's 30-credit grant, issued once at signup, never reset, never added to again
+3. `oneTimeCredits` — the Free tier's one-time grant (120 credits as of 2026-09-10's repricing, up from the original 30 — see `FREE_TIER_ONE_TIME_CREDITS`), issued once at signup, never reset, never added to again
 
 Consumption order: `planCredits` → `purchasedCredits` → `oneTimeCredits`.
 
@@ -188,15 +191,28 @@ Consumption order: `planCredits` → `purchasedCredits` → `oneTimeCredits`.
 
 ---
 
-## 7. Explicitly Out of Scope for This Document (Follow-up Work)
+## 7. Payment provider — Razorpay (built; migrated off Stripe 2026-09-10)
 
-Stripe subscription lifecycle, checkout flows, top-up purchase flows, and webhook handling (`invoice.paid`, `checkout.session.completed`, `customer.subscription.updated/deleted`) are a **separate, subsequent PR** — this document defines the credit accounting system those webhooks will call into (`grantPlanCredits(accountId, amount)`, `addPurchasedCredits(accountId, amount)`), not the Stripe integration itself. Building and testing the ledger/gate/debit machinery against manually-seeded test balances first, before wiring real payment webhooks on top, keeps the two concerns independently verifiable — consistent with this codebase's general preference for separable, independently-testable units.
+**Status: built, not "out of scope" anymore.** This section originally scoped the whole payment integration as follow-up work against Stripe. What actually shipped, in order: TASKS.md #179 (accounts/ledger/gate/debit against manually-seeded balances, no payment provider at all), #180/#181 (a real Stripe subscribe-checkout + webhook integration — Solo/Firm only, `checkout.session.completed` only), then the **credit-system-v2** session (2026-09-10) migrated that Stripe integration to **Razorpay** — which is what this document's own original framing ("Razorpay subscriptions from Day 1," per `cellix-pricing-v3.html` Phase 1) always specified; Stripe was a detour, not the destination.
+
+**What's live today:**
+- Subscriptions (Solo/Firm, plus the new **Beta** tier — see §8 update below) use **Razorpay's Subscriptions API** — a real recurring-billing product (Plan + Subscription objects, UPI Autopay/card mandate authorization), not manually-repurchased one-off links.
+- `RazorpayWebhookService` handles `subscription.activated` (first charge) AND `subscription.charged` (every renewal) — both grant credits. This closes a real gap the Stripe integration never had: Stripe's handler only ever granted credits once, at initial checkout, with no renewal-grant logic at all.
+- One-time top-up packs use **Razorpay Payment Links** (`payment_link.paid` webhook), authenticated via the task pane's existing session — not a marketing-site redirect, since a top-up debits/credits a specific signed-in user's account and the marketing site has no session with the backend.
+- `grantPlanCredits(accountId, amount)` / `addPurchasedCredits(accountId, amount)` (CD-3's original call-in contract) are unchanged in shape — only what calls them changed providers.
+
+**Known follow-up gaps, same shape as before, just against a different provider now:**
+- Firm's pooled/org billing (`orgId`, seat-level allotment scaling) — still no code for this; Firm's 3,000-credit pool is unchanged and flagged as its own future decision.
+- Enterprise accounts — still unresolved (§8 Q2).
+- Payment-failure/dunning handling beyond the two `subscription.*` events listed above.
+- Guest-checkout-email-to-real-account reconciliation (a marketing-site guest subscriber's email-keyed account vs. their real product userId).
 
 ---
 
 ## 8. Open Questions
 
-1. **Does the Firm plan's pooled allotment grow when additional seats (₹999/seat/mo) are purchased beyond the base 5?** The pricing doc prices extra seats but doesn't state whether they add credits to the pool or just add users drawing from the existing 3,000. This changes `credit_accounts.planCredits`'s reset calculation for orgs with `seatCount > 5`.
-2. **Enterprise accounts are "custom, negotiated" and inbound-only** — does the first Enterprise client get a manually-admin-granted `credit_accounts` document (no Stripe plan object at all), or does Enterprise still flow through the same subscription plumbing with a custom price? Affects whether §7's Stripe work needs an Enterprise-specific code path on day one or can defer it until an actual Enterprise deal exists.
-3. **Stripe payment failure grace period** — does a failed renewal charge freeze `planCredits` immediately, or does Stripe's own dunning/retry window apply first? Affects whether the gate check needs to consult `subscriptions.status` in addition to raw balance.
-4. **Annual-plan refunds** (pricing doc's risk register: "pro-rata refunds always, no fight") — when a refund is issued, does any already-granted `planCredits` allotment get clawed back, or does the user simply lose access at cancellation with whatever they'd already been granted left alone? Needs a decision before the refund flow (whichever payment-ops surface handles it) can be built correctly.
+1. **Does the Firm plan's pooled allotment grow when additional seats (₹999/seat/mo) are purchased beyond the base 5?** The pricing doc prices extra seats but doesn't state whether they add credits to the pool or just add users drawing from the existing 3,000. This changes `credit_accounts.planCredits`'s reset calculation for orgs with `seatCount > 5`. **Still open as of credit-system-v2 (2026-09-10)** — deliberately left untouched; no org/pooled-billing code exists yet to make this decision actionable.
+2. **Enterprise accounts are "custom, negotiated" and inbound-only** — does the first Enterprise client get a manually-admin-granted `credit_accounts` document (no Razorpay plan object at all), or does Enterprise still flow through the same subscription plumbing with a custom price? Affects whether the payment integration needs an Enterprise-specific code path on day one or can defer it until an actual Enterprise deal exists. Still open.
+3. **Razorpay payment failure / halted-subscription grace period** — Razorpay's subscription status vocabulary includes `halted` and `pending` states (distinct from Stripe's `past_due`) for a failed/retrying charge. Does a `subscription.halted` event freeze `planCredits` immediately, or does Razorpay's own retry window apply first? Affects whether the gate check needs to consult `subscriptions.status` in addition to raw balance. Still open — `RazorpayWebhookService` currently just records the status change, no gate-check consultation of it yet.
+4. **Annual-plan refunds** (pricing doc's risk register: "pro-rata refunds always, no fight") — when a refund is issued, does any already-granted `planCredits` allotment get clawed back, or does the user simply lose access at cancellation with whatever they'd already been granted left alone? Needs a decision before the refund flow (whichever payment-ops surface handles it) can be built correctly. Still open.
+5. **New (credit-system-v2): should the Beta cohort's 25-user cap be enforced in code?** Currently a manual/dashboard-tracked limit, not a counter or waitlist mechanism in this codebase — deliberate, since it's explicitly a small, hand-managed cohort per `cellix-pricing-v3.html`'s Phase 1 plan. Revisit if Beta needs to scale past a size a human can track by hand.
