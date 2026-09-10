@@ -344,6 +344,14 @@ Tests: `test/credit-cost-catalog-parity.spec.ts`, `test/credit-gate.service.spec
 
 **A methodology note worth keeping**: verifying mobile layout for the checkout page produced several false "overflow" readings using Chrome's `--headless --window-size=WxH` CLI flag, which does not reliably constrain the CSS viewport in this environment (confirmed by directly reading `window.innerWidth` via the DevTools Protocol, which reported 500px against a requested 390px). Switching to CDP's `Emulation.setDeviceMetricsOverride` gave a viewport that actually matched the request. One real bug did surface underneath the noise: the plan-toggle `<button className="flex-1">` pair didn't shrink below content width (a `flex:1` doesn't override a `<button>`'s `min-width:auto` — the standard flexbox min-content gotcha), fixed with `min-w-0`.
 
+### 3.19 Plan coverage is now checked structurally, not only prompted — Sept 10 2026 (TASKS.md #229–232)
+
+Two prompt rules had no enforcement and both failed on the same live run of the 12-month booking-ledger prompt: "expand a `repeatFor` phase into one group per entry" (the model expanded January only — the build shipped Main + January and 36 `#REF!` cells) and "back dropdowns with a Lists sheet" (January's validation pointed at `Lists!$B$3:$B$20`, which no subtask created). `Server/src/agents/utils/plan-coverage.util.ts` now enforces both deterministically inside `PlannerAgent`: `ensureRepeatForCoverage` clones the template entry's subtasks for any uncovered `repeatFor` entry before cross-phase stitching, and `ensureReferencedSheetsPlanned` adds a create subtask (and the `dependsOn` edges) for any `Sheet!ref` whose sheet neither exists nor is planned. Same pattern as `mergeSameSheetPhases` (#192): the prompt says it, code guarantees it.
+
+On the client, `outcomeVerifier.ts` now attributes a formula error to a missing referenced sheet (`missingReferencedSheets`) so the UI names the missing sheet and `buildRepairRequest` no longer offers to rewrite formulas that are correct. Telemetry: the apply path emits `accept.apply_start`; previously it re-emitted `accept.click`, doubling every Accept in `frontend.log`.
+
+Still unverified live — the fixes are covered by replay tests built from the run's own logged subtask descriptions, but the real prompt has not been re-run against them yet.
+
 ---
 
 ## 4. Open Questions for You

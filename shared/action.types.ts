@@ -176,6 +176,14 @@ export interface ClearRangeAction {
   sheetName: string;
   range: string;
   mode?: 'contents' | 'formats' | 'all';
+  /**
+   * Also delete every chart on the sheet. Cell-content clearing alone leaves a
+   * chart floating over an otherwise-empty grid — not what "clear the sheet" /
+   * "make it a plain workbook" means. Only the whole-sheet local lane
+   * (`tryLocalClearSheetActions`) sets this; a bounded/partial CLEAR_RANGE
+   * never should. TASKS.md #181.
+   */
+  clearCharts?: boolean;
 }
 
 export interface AddSheetAction {
