@@ -207,6 +207,50 @@ Consumption order: `planCredits` → `purchasedCredits` → `oneTimeCredits`.
 - Payment-failure/dunning handling beyond the two `subscription.*` events listed above.
 - Guest-checkout-email-to-real-account reconciliation (a marketing-site guest subscriber's email-keyed account vs. their real product userId).
 
+### Testing the real flow in Razorpay TEST MODE (added 2026-09-11)
+
+The unit specs (`test/razorpay-checkout.service.spec.ts`, `test/razorpay-webhook.service.spec.ts`, `test/billing.controller.spec.ts`) already cover the service logic in-process against a mocked `razorpay` SDK — that's what `npm test` runs, no external account needed. What they *can't* exercise is the real Razorpay side: an actual UPI Autopay mandate, a real `subscription.charged` webhook firing on renewal, real HMAC signature verification against a real webhook secret. For that, use Razorpay's own TEST MODE — a full sandbox on the real API and real dashboard, free, no live money ever moves. No homemade mock server is used or needed.
+
+**One-time setup:**
+1. Sign up at `dashboard.razorpay.com` (free) and flip the dashboard's mode toggle (top-left) to **Test Mode**.
+2. Settings → API Keys → Generate Test Key. Add the pair to `cellix_backend/.env`:
+   ```
+   RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxx
+   RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+3. Create the three test-mode Plans (Beta/Solo/Firm) and get their `plan_id`s:
+   ```
+   cd cellix_backend
+   npm run razorpay:setup-test-plans
+   ```
+   This runs `scripts/razorpay-setup-test-plans.ts`, which calls Razorpay's real test API directly (refuses to run if `RAZORPAY_KEY_ID` doesn't start with `rzp_test_`, so it can't accidentally target live keys) and prints three `plan_id`s to paste into `.env`:
+   ```
+   RAZORPAY_PLAN_ID_BETA=plan_xxxxxxxxxxxx
+   RAZORPAY_PLAN_ID_SOLO=plan_xxxxxxxxxxxx
+   RAZORPAY_PLAN_ID_FIRM=plan_xxxxxxxxxxxx
+   ```
+4. Webhooks need a public HTTPS URL — `localhost:4001` isn't reachable from Razorpay's servers. Tunnel it (any of these work; pick whichever you already have):
+   ```
+   npx localtunnel --port 4001
+   # or: ngrok http 4001
+   # or: cloudflared tunnel --url http://localhost:4001
+   ```
+5. Dashboard → Settings → Webhooks → Add New Webhook:
+   - URL: `<your-tunnel-url>/webhooks/razorpay`
+   - Secret: anything — copy the same value into `.env` as `RAZORPAY_WEBHOOK_SECRET`
+   - Active events: `subscription.activated`, `subscription.charged`, `subscription.cancelled`, `subscription.halted`, `subscription.completed`, `payment_link.paid`
+
+**Manual test sequence** (start the backend with `npm run start:dev` first):
+
+1. **Subscribe** — `POST /billing/public/checkout/subscribe` with `{"email":"test@example.com","planTier":"beta"}`, or just walk through `CheckoutPage` on the landing site (`npm run dev` in `CELLIX-landing-page/`, join the Beta plan). You land on Razorpay's real hosted checkout page, in test mode.
+2. **Pay with a test instrument** — Razorpay's published test values (safe, no real charge): card `4111 1111 1111 1111`, any future expiry, any CVV; or their test UPI VPA `success@razorpay` to simulate a completed UPI Autopay mandate.
+3. **Watch `subscription.activated` land** — the tunnel forwards Razorpay's webhook to your local `RazorpayWebhookController`. Confirm in Mongo: `credit_accounts` for that billingEntityId now shows `planCredits: 500` (Beta) and `planTier: 'beta'`; `subscriptions` has a row with `status: 'active'`.
+4. **Force a renewal charge** (this is the autopay test) — Razorpay's dashboard lets you trigger a subscription's next charge on demand in test mode: open the subscription under Subscriptions, use its test-mode "charge now" / advance-cycle action (exact label varies by dashboard version). This fires `subscription.charged` the same way a real monthly UPI Autopay debit would. Confirm the ledger shows a second `grantPlanCredits` entry and the balance replenished (not doubled — `planCredits` resets to 500, per CD-8, it doesn't add another 500 on top of leftover).
+5. **Cancel** — cancel the subscription from the dashboard (or Razorpay's Cancel Subscription API). Confirm `subscription.cancelled` lands and the `subscriptions` row flips `cancelAtPeriodEnd: true`, `status: 'cancelled'` — and that `planCredits` already granted are **not** clawed back (CD-8/CD-3: a completed grant stands; only future renewals stop).
+6. **Idempotency check** — use the dashboard's "Resend webhook" button (or replay the same POST body with curl) on an already-processed event. Confirm no duplicate row appears in `credit_ledger` and the balance doesn't change twice — `processedEventModel`'s composite event-id dedupe (CREDIT_SYSTEM_SCHEMA.md §4) is what this is actually testing.
+
+None of this requires writing new mock infrastructure — Razorpay's test mode already **is** the mock, maintained by Razorpay, with realistic webhook payloads and timing. The only project-specific piece is the plan-creation script above, since Plans (unlike Stripe Prices) have no dynamic/on-the-fly creation path.
+
 ---
 
 ## 8. Open Questions
