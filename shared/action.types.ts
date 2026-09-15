@@ -211,6 +211,22 @@ export interface CopySheetAction {
   position?: number;
 }
 
+/**
+ * Reorder a sheet tab. Guide T1.1 lists "move sheet — before/after another
+ * sheet, or to a specific position" as a Tier 1 operation, but no action
+ * expressed it, so "move the Summary sheet to the first position" was answered
+ * with a COPY_SHEET → RENAME_SHEET → DELETE_SHEET plan that could destroy the
+ * sheet it was asked to move. `position` is 0-based; `beforeSheet`/`afterSheet`
+ * name a neighbour instead, which is how users usually say it. TASKS.md #212.
+ */
+export interface MoveSheetAction {
+  type: 'MOVE_SHEET';
+  sheetName: string;
+  position?: number;
+  beforeSheet?: string;
+  afterSheet?: string;
+}
+
 export interface CreateTableAction {
   type: 'CREATE_TABLE';
   sheetName: string;
@@ -419,6 +435,27 @@ export interface SetMatchingRowsAction {
   filter?: RangeFilterSpec;
   targetColumn: string;
   value: string | number | boolean;
+  explicitOverwriteConfirmed?: boolean;
+}
+
+/**
+ * Delete every row matching a predicate, resolved against the REAL cells at
+ * apply time — the sibling of SET_MATCHING_ROWS/FORMAT_MATCHING_ROWS.
+ *
+ * "Delete blank rows" used to be answered with a plain DELETE_ROW whose row and
+ * rowCount the model guessed: on a sheet with no blank rows at all it proposed
+ * deleting 21 rows, and on a re-run all 30 — both passing deterministic checks
+ * and reported as "verified: true", because nothing compared the targeted rows
+ * against their contents. Which rows match is computable, so it must never be
+ * guessed. `filter` omitted means "rows where every cell is empty".
+ * TASKS.md #234.
+ */
+export interface DeleteMatchingRowsAction {
+  type: 'DELETE_MATCHING_ROWS';
+  sheetName: string;
+  range: string;
+  hasHeaders: boolean;
+  filter?: RangeFilterSpec;
   explicitOverwriteConfirmed?: boolean;
 }
 
@@ -682,6 +719,8 @@ export type RichAction =
   | DeleteSheetAction
   | RenameSheetAction
   | CopySheetAction
+  | MoveSheetAction
+  | DeleteMatchingRowsAction
   | CreateTableAction
   | DeleteTableAction
   | CreateChartAction
