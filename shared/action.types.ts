@@ -448,7 +448,7 @@ export interface SetMatchingRowsAction {
  * and reported as "verified: true", because nothing compared the targeted rows
  * against their contents. Which rows match is computable, so it must never be
  * guessed. `filter` omitted means "rows where every cell is empty".
- * TASKS.md #234.
+ * TASKS.md #238.
  */
 export interface DeleteMatchingRowsAction {
   type: 'DELETE_MATCHING_ROWS';
@@ -527,6 +527,16 @@ export interface AutoFilterAction {
   sheetName?: string;
   /** Full header + data range the filter dropdowns apply to, e.g. "A1:N51". */
   range: string;
+  /**
+   * Real filter criteria on one column — e.g. "taxable amount > 1 lakh". Guide
+   * T2.2 ("Show only rows where…", "Filter by condition") is a filter with a
+   * condition, not just dropdown arrows; omitting this only adds the arrows
+   * and leaves every row visible, which is not what "filter by X" asked for.
+   * TASKS.md #221.
+   */
+  filter?: RangeFilterSpec;
+  /** Whether `range`'s first row is headers, for resolving filter.column by name. Defaults true. */
+  hasHeaders?: boolean;
 }
 
 export interface SetZoomAction {
