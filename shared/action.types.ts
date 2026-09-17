@@ -211,6 +211,22 @@ export interface CopySheetAction {
   position?: number;
 }
 
+/**
+ * Reorder a sheet tab. Guide T1.1 lists "move sheet — before/after another
+ * sheet, or to a specific position" as a Tier 1 operation, but no action
+ * expressed it, so "move the Summary sheet to the first position" was answered
+ * with a COPY_SHEET → RENAME_SHEET → DELETE_SHEET plan that could destroy the
+ * sheet it was asked to move. `position` is 0-based; `beforeSheet`/`afterSheet`
+ * name a neighbour instead, which is how users usually say it. TASKS.md #212.
+ */
+export interface MoveSheetAction {
+  type: 'MOVE_SHEET';
+  sheetName: string;
+  position?: number;
+  beforeSheet?: string;
+  afterSheet?: string;
+}
+
 export interface CreateTableAction {
   type: 'CREATE_TABLE';
   sheetName: string;
@@ -422,6 +438,27 @@ export interface SetMatchingRowsAction {
   explicitOverwriteConfirmed?: boolean;
 }
 
+/**
+ * Delete every row matching a predicate, resolved against the REAL cells at
+ * apply time — the sibling of SET_MATCHING_ROWS/FORMAT_MATCHING_ROWS.
+ *
+ * "Delete blank rows" used to be answered with a plain DELETE_ROW whose row and
+ * rowCount the model guessed: on a sheet with no blank rows at all it proposed
+ * deleting 21 rows, and on a re-run all 30 — both passing deterministic checks
+ * and reported as "verified: true", because nothing compared the targeted rows
+ * against their contents. Which rows match is computable, so it must never be
+ * guessed. `filter` omitted means "rows where every cell is empty".
+ * TASKS.md #238.
+ */
+export interface DeleteMatchingRowsAction {
+  type: 'DELETE_MATCHING_ROWS';
+  sheetName: string;
+  range: string;
+  hasHeaders: boolean;
+  filter?: RangeFilterSpec;
+  explicitOverwriteConfirmed?: boolean;
+}
+
 export interface MoveRangeAction {
   type: 'MOVE_RANGE';
   sourceSheet: string;
@@ -490,6 +527,16 @@ export interface AutoFilterAction {
   sheetName?: string;
   /** Full header + data range the filter dropdowns apply to, e.g. "A1:N51". */
   range: string;
+  /**
+   * Real filter criteria on one column — e.g. "taxable amount > 1 lakh". Guide
+   * T2.2 ("Show only rows where…", "Filter by condition") is a filter with a
+   * condition, not just dropdown arrows; omitting this only adds the arrows
+   * and leaves every row visible, which is not what "filter by X" asked for.
+   * TASKS.md #221.
+   */
+  filter?: RangeFilterSpec;
+  /** Whether `range`'s first row is headers, for resolving filter.column by name. Defaults true. */
+  hasHeaders?: boolean;
 }
 
 export interface SetZoomAction {
@@ -682,6 +729,8 @@ export type RichAction =
   | DeleteSheetAction
   | RenameSheetAction
   | CopySheetAction
+  | MoveSheetAction
+  | DeleteMatchingRowsAction
   | CreateTableAction
   | DeleteTableAction
   | CreateChartAction
