@@ -157,6 +157,8 @@ Three modes: `ask` | `plan` | `action` (aka `act`). Persisted per workbook in `l
 ### LLM usage accounting (`cellix_backend/src/llm-usage/`)
 Every network call to the model provider becomes one `llm_calls` row (retries included, real OpenRouter `usage.cost`), rolled up into one `ai_prompts` row per user prompt. Recording lives **only** in `OpenRouterService.sendChatCompletionOnce` / `streamChatOnce` — any new way of calling the provider must go through them or its cost is invisible. Attribution is an AsyncLocalStorage context set in `ConversationController`; the prompt id **is** the trace id, which is how a stepwise run's `/continue` waves roll up (via `agent_runs.traceId`). The calling agent is derived from the stack (`llm-caller.util.ts`). Both collections are durable (no TTL). See CODEBASE_ANALYSIS.md §3.20.
 
+**Credits are charged from that same cost** (TASKS.md #341): each request's summed `costUsd` × `CREDITS_PER_USD`, debited by `UsageBillingService` from `ConversationController` — never per route inside `ConversationService`. The debit takes whatever balance is left (drains to 0), and a request is refused only when the balance is already 0.
+
 ### Domain Tools (`cellix_backend/src/domain-tools/`)
 GST/ITC/TDS/bank-recon/Ind-AS stubs as deterministic functions — scaffolding only, unwired until CA sign-off.
 
