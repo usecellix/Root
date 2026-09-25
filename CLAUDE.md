@@ -9,16 +9,16 @@ Cellix is an **Excel task-pane add-in** (Office.js) with an AI assistant that re
 Three sub-projects:
 - `frontend/` — React + Vite Excel add-in (Office.js), port 3000
 - `cellix_backend/` — NestJS + Fastify API, port 4001
-- `Dashboard/` — Next.js ops log viewer, port 3100
+- `Dashboard/` — Next.js admin app (AI usage/cost per prompt, users, subscriptions, credits), port 3100
 - `shared/` — Shared TypeScript action types (`action.types.ts`)
 
 ## Working With This Repo Across Sessions
 
-Claude Code has no memory between sessions — `VISION.md`, `PRD.md`, `ARCHITECTURE.md`, and `TASKS.md` in `Root/` are the memory. Three habits keep that memory trustworthy:
+Claude Code has no memory between sessions — `VISION.md`, `PRD.md`, `ARCHITECTURE.md`, and `TASKS.md` at the repo root are the memory. Three habits keep that memory trustworthy:
 
-1. **Start every session by reading `Root/VISION.md`, `Root/PRD.md`, `Root/ARCHITECTURE.md`, and `Root/TASKS.md` before doing anything else.** They're the source of truth for why, what, how, and what's left.
-2. **Don't fold "also fix X while you're in there" into an in-progress task.** That's how scope creep sneaks in. Add X as a new numbered item in `Root/TASKS.md` instead, and pick it up as its own task.
-3. **After finishing a task, update `Root/CODEBASE_ANALYSIS.md` and `Root/TASKS.md` to reflect it.** Stale docs are worse than no docs — a `Partial`/`New` flag or an open task that's actually done misleads the next session more than an honest gap would.
+1. **Start every session by reading `VISION.md`, `PRD.md`, `ARCHITECTURE.md`, and `TASKS.md` before doing anything else.** They're the source of truth for why, what, how, and what's left.
+2. **Don't fold "also fix X while you're in there" into an in-progress task.** That's how scope creep sneaks in. Add X as a new numbered item in `TASKS.md` instead, and pick it up as its own task.
+3. **After finishing a task, update `CODEBASE_ANALYSIS.md` and `TASKS.md` to reflect it.** Stale docs are worse than no docs — a `Partial`/`New` flag or an open task that's actually done misleads the next session more than an honest gap would.
 
 ---
 
@@ -51,9 +51,9 @@ npx office-addin-dev-certs install
 
 ### Dashboard (`Dashboard/`)
 ```bash
-npm run dev              # Next.js dev (http://localhost:3100)
+npm run dev              # Next.js dev (http://localhost:3100) — only ONE dev server per folder in Next 16
 npm run build
-npm run import-logs      # seed MongoDB from logs/*.log files
+npm run start            # serve the production build
 ```
 
 ---
@@ -79,7 +79,7 @@ npm run import-logs      # seed MongoDB from logs/*.log files
 | `VITE_API_BASE_URL` | `http://localhost:4001` |
 
 ### Dashboard (`.env.local` in `Dashboard/`)
-Same `MONGODB_URL` / `MONGODB_DB_NAME` as backend.
+Same `MONGODB_URL` / `MONGODB_DB_NAME` as backend, plus `ADMIN_PASSWORD` (required — the admin is locked without it) and optional `ADMIN_SESSION_SECRET`. Changing either signs every admin out.
 
 ---
 
@@ -117,7 +117,7 @@ All actions flow through `RichActionEngine` in the frontend before Office.js app
 - **Action-type exhaustiveness checks (TASKS.md #5)**: `cellix_backend/src/excel-ai/types/action-catalog.ts` is a `Record<SheetActionType, CatalogEntry>` the compiler forces to stay exhaustive against the backend's own live action union — added after the `FREEZE_PANES` incident (a type declared with no handler wired up). The frontend mirrors the same pattern with two catalogs: `frontend/src/types/sheetActionCatalog.ts` (wire-type parity) and `frontend/src/engine/actionDispatchCatalog.ts` (dispatch completeness). `frontend/src/types/actionCatalogParity.spec.ts` imports the backend's catalog directly across the repo boundary and fails if the two unions disagree — a real drift detector, not a hand-copied mirror.
 
 ### Workflow Tracing
-`WorkflowTraceService` (`cellix_backend/src/common/logging/workflow-trace.service.ts`) records a per-request DAG — `frontend_in → router/tier → planner → executor → verifier → changeset → sse_out → accept/reject`, plus `tool` nodes — into a `workflow_traces` Mongo collection (3-day TTL, same pattern as the other log collections). It's injected via `@Optional()` into `planner.agent.ts`, `executor.agent.ts`, `verifier.agent.ts`, and `change-set.service.ts`, appending nodes fire-and-forget as a request executes. The Dashboard's `/workflow` section (`WorkflowFlowViewer.tsx`, built on `@xyflow/react`) renders it as an interactive, color-coded, click-to-inspect flow graph. This is internal observability tooling, not a product-facing feature — it isn't in `PRD.md`, deliberately.
+`WorkflowTraceService` (`cellix_backend/src/common/logging/workflow-trace.service.ts`) records a per-request DAG — `frontend_in → router/tier → planner → executor → verifier → changeset → sse_out → accept/reject`, plus `tool` nodes — into a `workflow_traces` Mongo collection (3-day TTL, same pattern as the other log collections). It's injected via `@Optional()` into `planner.agent.ts`, `executor.agent.ts`, `verifier.agent.ts`, and `change-set.service.ts`, appending nodes fire-and-forget as a request executes. Nothing displays it since the Dashboard rebuild (TASKS.md #295); it is still read by checkpoint restore auditing. This is internal observability tooling, not a product-facing feature — it isn't in `PRD.md`, deliberately.
 
 ### SSE Protocol
 Backend streams SSE events from `POST /excel-ai/conversation`:
@@ -151,9 +151,11 @@ Three modes: `ask` | `plan` | `action` (aka `act`). Persisted per workbook in `l
 **Planner emission order is a token-budget rule, not an execution-order rule.** The "YEARLY MONTHLY LEDGER" prompt block tells the planner to emit Main-sheet subtasks *first* and the 12 repetitive month-sheet subtasks *last*, so a truncation loses regenerable boilerplate rather than the dashboard. This is safe only because `computeExecutionWaves` (`agents/utils/task-graph.util.ts`) schedules purely on `dependsOn` edges and ignores array position — pinned by tests in `test/task-graph.util.spec.ts`. See TASKS.md #83.
 
 ### Logging
-- NDJSON files: `cellix_backend/logs/requests.log`, `planner.log`, `frontend.log` (24h prune)
-- MongoDB collections: `request_logs`, `planner_logs`, `frontend_logs` (3-day TTL on `ts`)
-- Dashboard at port 3100 browses these logs; `npm run import-logs` seeds Mongo from files
+- NDJSON files: `cellix_backend/logs/requests.log`, `planner.log`, `frontend.log` (24h prune) — the debugging surface. (Their Mongo mirrors `request_logs`/`planner_logs`/`frontend_logs` were removed in TASKS.md #295.)
+- `workflow_traces` (3-day TTL) is still written.
+
+### LLM usage accounting (`cellix_backend/src/llm-usage/`)
+Every network call to the model provider becomes one `llm_calls` row (retries included, real OpenRouter `usage.cost`), rolled up into one `ai_prompts` row per user prompt. Recording lives **only** in `OpenRouterService.sendChatCompletionOnce` / `streamChatOnce` — any new way of calling the provider must go through them or its cost is invisible. Attribution is an AsyncLocalStorage context set in `ConversationController`; the prompt id **is** the trace id, which is how a stepwise run's `/continue` waves roll up (via `agent_runs.traceId`). The calling agent is derived from the stack (`llm-caller.util.ts`). Both collections are durable (no TTL). See CODEBASE_ANALYSIS.md §3.20.
 
 ### Domain Tools (`cellix_backend/src/domain-tools/`)
 GST/ITC/TDS/bank-recon/Ind-AS stubs as deterministic functions — scaffolding only, unwired until CA sign-off.
@@ -173,4 +175,4 @@ GST/ITC/TDS/bank-recon/Ind-AS stubs as deterministic functions — scaffolding o
 
 The Dashboard is a **Next.js 16** app. The `Dashboard/AGENTS.md` contains a note: this version of Next.js has breaking changes — read `node_modules/next/dist/docs/` before writing any code.
 
-MongoDB collections for logs use a **3-day TTL** on `ts`. File mirrors use a **24h prune**.
+It is the **admin app**, password-protected: `src/proxy.ts` gates routes, and every query goes through `adminDb()` (`src/lib/mongodb.ts`), which re-checks the session — don't query Mongo any other way. Data functions live in `src/lib/data/`; charts are hand-built SVG in `src/components/charts/` (no chart library).
