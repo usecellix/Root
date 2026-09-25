@@ -117,7 +117,7 @@ All actions flow through `RichActionEngine` in the frontend before Office.js app
 - **Action-type exhaustiveness checks (TASKS.md #5)**: `cellix_backend/src/excel-ai/types/action-catalog.ts` is a `Record<SheetActionType, CatalogEntry>` the compiler forces to stay exhaustive against the backend's own live action union — added after the `FREEZE_PANES` incident (a type declared with no handler wired up). The frontend mirrors the same pattern with two catalogs: `frontend/src/types/sheetActionCatalog.ts` (wire-type parity) and `frontend/src/engine/actionDispatchCatalog.ts` (dispatch completeness). `frontend/src/types/actionCatalogParity.spec.ts` imports the backend's catalog directly across the repo boundary and fails if the two unions disagree — a real drift detector, not a hand-copied mirror.
 
 ### Workflow Tracing
-`WorkflowTraceService` (`cellix_backend/src/common/logging/workflow-trace.service.ts`) records a per-request DAG — `frontend_in → router/tier → planner → executor → verifier → changeset → sse_out → accept/reject`, plus `tool` nodes — into a `workflow_traces` Mongo collection (3-day TTL, same pattern as the other log collections). It's injected via `@Optional()` into `planner.agent.ts`, `executor.agent.ts`, `verifier.agent.ts`, and `change-set.service.ts`, appending nodes fire-and-forget as a request executes. Nothing displays it since the Dashboard rebuild (TASKS.md #295); it is still read by checkpoint restore auditing. This is internal observability tooling, not a product-facing feature — it isn't in `PRD.md`, deliberately.
+`WorkflowTraceService` (`cellix_backend/src/common/logging/workflow-trace.service.ts`) records a per-request DAG — `frontend_in → router/tier → planner → executor → verifier → changeset → sse_out → accept/reject`, plus `tool` nodes — into a `workflow_traces` Mongo collection (3-day TTL, same pattern as the other log collections). It's injected via `@Optional()` into `planner.agent.ts`, `executor.agent.ts`, `verifier.agent.ts`, and `change-set.service.ts`, appending nodes fire-and-forget as a request executes. Nothing displays it since the Dashboard rebuild (TASKS.md #337); it is still read by checkpoint restore auditing. This is internal observability tooling, not a product-facing feature — it isn't in `PRD.md`, deliberately.
 
 ### SSE Protocol
 Backend streams SSE events from `POST /excel-ai/conversation`:
@@ -151,7 +151,7 @@ Three modes: `ask` | `plan` | `action` (aka `act`). Persisted per workbook in `l
 **Planner emission order is a token-budget rule, not an execution-order rule.** The "YEARLY MONTHLY LEDGER" prompt block tells the planner to emit Main-sheet subtasks *first* and the 12 repetitive month-sheet subtasks *last*, so a truncation loses regenerable boilerplate rather than the dashboard. This is safe only because `computeExecutionWaves` (`agents/utils/task-graph.util.ts`) schedules purely on `dependsOn` edges and ignores array position — pinned by tests in `test/task-graph.util.spec.ts`. See TASKS.md #83.
 
 ### Logging
-- NDJSON files: `cellix_backend/logs/requests.log`, `planner.log`, `frontend.log` (24h prune) — the debugging surface. (Their Mongo mirrors `request_logs`/`planner_logs`/`frontend_logs` were removed in TASKS.md #295.)
+- NDJSON files: `cellix_backend/logs/requests.log`, `planner.log`, `frontend.log` (24h prune) — the debugging surface. (Their Mongo mirrors `request_logs`/`planner_logs`/`frontend_logs` were removed in TASKS.md #337.)
 - `workflow_traces` (3-day TTL) is still written.
 
 ### LLM usage accounting (`cellix_backend/src/llm-usage/`)

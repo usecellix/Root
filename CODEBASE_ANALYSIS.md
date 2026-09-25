@@ -352,7 +352,7 @@ On the client, `outcomeVerifier.ts` now attributes a formula error to a missing 
 
 Still unverified live — the fixes are covered by replay tests built from the run's own logged subtask descriptions, but the real prompt has not been re-run against them yet.
 
-### 3.20 Per-prompt LLM accounting; the Dashboard is now the admin app — Sept 23 2026 (TASKS.md #295)
+### 3.20 Per-prompt LLM accounting; the Dashboard is now the admin app — Sept 23 2026 (TASKS.md #337)
 
 **Supersedes §1.4 and §1.5's Dashboard description.** The Dashboard no longer reads `request_logs` / `planner_logs` / `frontend_logs` / `workflow_traces`. It is a password-protected admin app (Overview, Prompts, Models & cost, Users, Billing) reading `ai_prompts`, `llm_calls`, `user`/`session`/`account` (better-auth), `subscriptions`, `credit_accounts` and `credit_ledger`. The three log collections' Mongo mirrors were removed from the backend; their NDJSON files remain the debugging surface, and `workflow_traces` is still written (checkpoint restore and the long-prompt pipeline depend on it) but nothing displays it now.
 
@@ -366,7 +366,7 @@ How accounting works, since it is easy to break by accident:
 | Agent label | stack at the public entry point (`llm-caller.util.ts`) | Derived from the caller's file name; a new wrapper file between an agent and `complete()` must be added to its skip list or it becomes the label. |
 | Cost | OpenRouter `usage.cost`; else `resolvePricingForModel` estimate, flagged `costEstimated` | Failed calls cost 0. |
 
-Two data-model gaps it surfaced: billing and prompts join on the user's hex id string while `session`/`account` store an ObjectId (the Dashboard handles both); and email-keyed guest credit accounts from the marketing checkout (§3.18) are real and visible on the Billing page. Follow-ups: #297 (retire `audit_logs`), #298 (link credit debits to prompts).
+Two data-model gaps it surfaced: billing and prompts join on the user's hex id string while `session`/`account` store an ObjectId (the Dashboard handles both); and email-keyed guest credit accounts from the marketing checkout (§3.18) are real and visible on the Billing page. Follow-ups: #339 (retire `audit_logs`), #340 (link credit debits to prompts).
 
 ---
 
