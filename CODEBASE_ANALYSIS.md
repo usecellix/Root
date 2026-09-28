@@ -368,6 +368,8 @@ Still unverified live — the fixes are covered by replay tests built from the r
 
 ### 3.20 Per-prompt LLM accounting; the Dashboard is now the admin app — Sept 23 2026 (TASKS.md #337)
 
+**Billing hardening, Sept 28 2026 (TASKS.md #346–#351).** Grants claim their `credit_ledger` row (unique `paymentEventId`) *before* touching a balance, so duplicate/retried Razorpay events are no-ops. Plan grants are keyed per cycle (`plan:<sub>:<current_start>`), top-ups per link (`topup:<linkId>`). Top-ups no longer depend on the webhook: `topup_orders` records each link and `GET /billing/account` runs `RazorpayWebhookService.reconcileTopups`. `GuestAccountLinkService` maps guest (email-keyed) checkouts onto the signed-in user, both at webhook time and on balance read. CORS now allows PATCH/DELETE (it had silently blocked chat rename/delete). The Dashboard shows credits charged per prompt, a per-call credit equivalent, and credits used + balance per user.
+
 **Supersedes §1.4 and §1.5's Dashboard description.** The Dashboard no longer reads `request_logs` / `planner_logs` / `frontend_logs` / `workflow_traces`. It is a password-protected admin app (Overview, Prompts, Models & cost, Users, Billing) reading `ai_prompts`, `llm_calls`, `user`/`session`/`account` (better-auth), `subscriptions`, `credit_accounts` and `credit_ledger`. The three log collections' Mongo mirrors were removed from the backend; their NDJSON files remain the debugging surface, and `workflow_traces` is still written (checkpoint restore and the long-prompt pipeline depend on it) but nothing displays it now.
 
 How accounting works, since it is easy to break by accident:
