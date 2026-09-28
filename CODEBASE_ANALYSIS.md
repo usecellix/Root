@@ -388,6 +388,19 @@ Two data-model gaps it surfaced: billing and prompts join on the user's hex id s
 
 ---
 
+### 3.21 A failed Accept is partially applied — recovery must re-apply only what's left — Sept 28 2026 (TASKS.md #354)
+
+`RichActionEngine.applyActions` runs each action in its own try/catch and keeps going. Only the overwrite guard is a hard stop. A card whose Accept "failed" has therefore usually applied every action that could apply, and the card goes back to `pending` over a half-written step. Two consequences worth knowing:
+
+- **Re-clicking Accept is not a retry.** It replays the whole card (through `previewManager.accept()`, which still holds the full list), and the writes that already landed trip the overwrite guard.
+- **Recovery must be a subset.** #354 does this for the missing-sheet case: `utils/missingSheetRetry.ts` works out, from the live sheet list, which actions could not have applied (those touching a missing sheet), creates the sheet, and applies just those through `acceptActions(turnId, blockId, actionsOverride)`, which drops the pending preview first. The rest of the accept path is unchanged, so a stepwise run continues from that step.
+
+Engine errors carry the action type but not the action index (`${type}: ${message}`), so a subset can only be derived by reasoning like the above, not read off the failure. A general "retry the failed part" (#359) needs the engine to report which actions failed. The root cause of the live case, a wave writing to Main with no create, is #355.
+
+**Same day, two more apply-order/shape findings (TASKS.md #360, #361).** `RichActionEngine.applyActions` now runs `hoistSheetCreates` before anything else, so a card's own `ADD_SHEET` always precedes writes to that sheet: the server does not guarantee it for stepwise waves. And the legacy→rich converter is a second place a field can silently vanish between the wire and the handler. #216 fixed the handler's `colCount`, but `legacyConverter.ts` had already dropped it. When a handler gains a field, check that `toRichAction`/`convertLegacyToRich` carry it.
+
+---
+
 ## 4. Open Questions for You
 
 Grouped by what kind of decision each one is — genuine calls only you can make, not "should this bug get fixed" (which is usually self-evident from the spec files above).
