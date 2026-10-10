@@ -280,6 +280,8 @@ Listing these is the point of the section — each is a plausible request that g
 | **Standalone file generation (downloadable .xlsx/.csv)** | Requires a server-side writer independent of Office.js. Deferred with the upload surface. |
 | **PDF / PowerPoint generation** | Named as future work in `VISION.md`. |
 
+> **Attaching a file is not the upload surface.** Since October 2026 a user can attach a bank statement in the task pane and import it into a new sheet (`ATTACHMENT_EXTRACTION_PLAN.md`). The file is read inside the task pane and the result is written through the same preview and Accept as any other change, so the server still never manipulates a workbook and D1 stands. This is a capability added outside the must-have list in §3; it is not yet a v1 commitment and has no metric attached.
+
 ### 5.2 Deferred per `VISION.md` *Explicit Non-Goals*
 
 | Non-goal | Reasoning |

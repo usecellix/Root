@@ -76,6 +76,7 @@ graph TD
     App --> ExcelAi[ExcelAiModule<br/>routing + tiering + conversation]
     App --> Sheets[SheetsModule<br/>multi-sheet compare]
     App --> DomainTools[DomainToolsModule<br/>GST/TDS/recon stubs — unwired]
+    App --> BankStatement[BankStatementModule<br/>POST /ingest/bank-statement — no LLM]
 
     ExcelAi --> Agents[AgentsModule<br/>Tier 3: Planner/Executor/Verifier + 4 checkers]
     ExcelAi --> AuditM
@@ -248,6 +249,20 @@ This is new design work, directly answering `PRD.md` §8 Q1 ("what does a checkp
 **What this requires that doesn't exist today (see AD-4):** a stable identifier for "this workbook" that survives past a 24-hour conversation reset, so the restore chain can be scoped correctly across sessions. Proposed in §7.2: mint a `workbookId` client-side via Office.js's `document.settings` (a key-value store that persists *inside* the .xlsx file itself, surviving close/reopen — unlike `conversationId`, which is a session concept), and thread it through `conversations`, `change_sets`, and the new `checkpoints` collection as the durable correlation key.
 
 **Status: Proposed. See `DATABASE_SCHEMA.md` §5–6 for the concrete schema.**
+
+### AD-10 — An attachment is a read-only input, decoded in the task pane
+
+**Decision:** A file the user attaches (first case: a bank statement, October 2026) is decoded by the task pane into plain rows of text and sent to the server as JSON. The server turns it into sheet actions. Those actions reach the workbook the only way anything does: preview, Accept, Office.js.
+
+**Why:** It keeps AD-1 intact. Nothing on the server opens, holds or writes a file, so "attach a file" adds an input, not the second write path `PRD.md` D1 defers. It also means the raw file and any PDF password never leave the user's machine, and no multipart upload endpoint exists to secure.
+
+**Consequence:**
+- The decoding libraries (pdf.js, SheetJS) ship to the client and are loaded on first use. The parsing rules stay on the server, in `domain-tools/ingestion/`, under the same no-LLM rule as the rest of that folder (AD-8).
+- The decoded-file contract is one more type declared on both sides with nothing enforcing agreement, the AD-7 problem again.
+- The decoded file is the user's own financial data crossing the wire as an ordinary request body, so the generic request logging had to learn not to record it. Any future attachment route must do the same.
+- An import currently bypasses the change-set layer entirely (no revert, no audit record). That is a gap against AD-9's "anything the agent applies, it can undo", accepted for now and tracked as `TASKS.md` #365.
+
+**Status: Implemented for bank statements. See `ATTACHMENT_EXTRACTION_PLAN.md`.**
 
 ---
 

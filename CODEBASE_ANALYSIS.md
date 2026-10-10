@@ -32,7 +32,8 @@ NestJS 11 + Fastify, TypeScript, Jest. Key dependencies: `@nestjs/mongoose` + `m
 - `audit/` — `change-set.service.ts`, `diff.engine.ts`, provenance/`sourceRefs` plumbing, schemas.
 - `virtual/` — shadow-workbook dry-run simulator (`shadowWorkbook.ts`, `virtualApply.ts`).
 - `formula/` — `FormulaValidatorService`: syntax checks, reference bounds-checking, hardcode lint.
-- `domain-tools/` — GST/ITC/TDS/bank-recon/Ind-AS stub functions + a real tool-call contract (`DomainTool<TIn,TOut>`, `registry.ts`, `invoke-domain-tool.ts`).
+- `domain-tools/` — GST/ITC/TDS/bank-recon/Ind-AS stub functions + a real tool-call contract (`DomainTool<TIn,TOut>`, `registry.ts`, `invoke-domain-tool.ts`). Its `ingestion/` folder holds the bank statement parser and verifier, which are real, not stubs (§3.22).
+- `bank-statement/` — `POST /ingest/bank-statement`: decoded statement in, new-sheet actions out, no LLM (§3.22).
 - `sheets/`, `auth/`, `database/`, `config/`, `common/` (includes the new `logging/workflow-trace.service.ts`, §1.5), `health/`, `actions/` (a smaller, apparently-legacy type fragment — see §3.12).
 
 Test suite: 77 `*.spec.ts` files under `test/`, plus tests colocated under `src/domain-tools/`. CI (`.github/workflows/backend-tests.yml`) runs a curated Phase-01–08 subset then the full suite, gated on `ENABLE_COMPLEXITY_TIERING=full`. **This workflow's ability to actually run is in question — see §3.2.**
@@ -398,6 +399,75 @@ Two data-model gaps it surfaced: billing and prompts join on the user's hex id s
 Engine errors carry the action type but not the action index (`${type}: ${message}`), so a subset can only be derived by reasoning like the above, not read off the failure. A general "retry the failed part" (#359) needs the engine to report which actions failed. The root cause of the live case, a wave writing to Main with no create, is #355.
 
 **Same day, two more apply-order/shape findings (TASKS.md #360, #361).** `RichActionEngine.applyActions` now runs `hoistSheetCreates` before anything else, so a card's own `ADD_SHEET` always precedes writes to that sheet: the server does not guarantee it for stepwise waves. And the legacy→rich converter is a second place a field can silently vanish between the wire and the handler. #216 fixed the handler's `colCount`, but `legacyConverter.ts` had already dropped it. When a handler gains a field, check that `toRichAction`/`convertLegacyToRich` carry it.
+
+### 3.22 Bank statement import — the first attachment path — Oct 8 2026 (TASKS.md #363)
+
+The paperclip now does something. `ATTACHMENT_EXTRACTION_PLAN.md` is the full design; this is what a later session needs to know before touching it.
+
+**Shape.** The task pane decodes the file (`client/src/services/attachments/`) into a *raw table* and posts it as JSON to `POST /ingest/bank-statement`. The server parses, checks and returns sheet actions, which go through the ordinary preview and Accept. There is no upload endpoint and no LLM anywhere on the path, so an import costs no credits. Dispatch on the client mirrors GST reconciliation: `sendMessage` branches to `dispatchBankStatementImport` before the local-sheet and GST lanes.
+
+**Not run inside Excel.** Everything is covered by unit tests and by running the owner's real statement through the same code in Node. pdf.js in the Office webview, and how the written cells actually look, are untested (TASKS.md #364).
+
+Traps, each of which was hit or designed around:
+
+- **The raw-table contract is declared twice** (`client/src/types/rawTable.ts`, `Server/src/domain-tools/ingestion/raw-table.types.ts`). Nothing enforces that they match. Same drift risk as AD-7.
+- **Header labels are matched exactly, on purpose.** The sample statement's account-details block has a line reading "Effective Available Balance … Date of Issue". Loose matching takes it for the header. Add a new bank's label to `HEADER_ALIASES`; do not loosen the match.
+- **PDF amounts are assigned by right edge.** They are right-aligned, so a six-digit deposit starts left of its own heading. A left-edge rule files it as a withdrawal. The fixture has such a row and a test pins it.
+- **A "DR/CR" column next to separate debit and credit columns is the sign of the balance**, not the transaction direction, and a "Type" column is only Dr/Cr if its values say so.
+- **Footer or wrapped description** is decided by the gap under the transaction line, with repeated-text detection as a second test. Both are needed: a regular payee's line recurs at the same height on several pages and must not be taken for a footer.
+- **A question typed with the file is answered after Accept, by the ordinary chat path** (TASKS.md #377). It rides on the card as `ActionBlock.followUp` and `useConversation.askAfterImport` sends it once the apply succeeds. It is deliberately not folded into the import turn: the model must see the real sheet, which exists only after Accept.
+- **The chat shows only the first line of an answer when a card follows it** (`shortenActionPreviewCopy` in `TurnRenderer`). Anything the user must see about a staged change belongs in the card's `userFacingSummary`, not further down the answer text.
+- **The import is not a change set.** No Revert, no `change_sets` row, no post-apply read-back. Deliberate, and open as TASKS.md #365.
+- **Privacy has four separate guards**, because the data would otherwise leak in four places: the route's response is not captured for `logs/requests.log` (`@SkipLogCapture`); the request's `rawTable` is logged as a row count (`sanitizeLogBody`); the chat history sent to the model gets one line about the import, not its figures; and `chatSessionStorage` drops an import card's rows from the copy saved to `localStorage`. A new attachment type needs all four again.
+- **A pending import card does not survive a pane reload.** Its rows are not saved, so on load it is closed with a note to attach the file again (`expireRowlessImport`).
+- **The route's 16 MiB body limit is set by an `onRoute` hook** (`common/http/route-body-limits.ts`) that must be registered before `app.listen`. A new large-body route goes in that file's map, not in a raised global limit.
+- **The real sample statement is in `Cellix/samples/`, outside all three repos.** Never commit it or copy text from it. The committed fixture keeps its layout with every value replaced.
+
+Unrelated finding from the same work: `/gst/*`, `/sheets/*` and `/audit/*` have no `AuthGuard` (TASKS.md #368).
+
+### 3.23 Questions about a sheet's rows are computed, not read by the model — Oct 8 2026 (TASKS.md #389)
+
+`Server/src/excel-ai/table-query/` answers "what is the total…", "which are the N largest…", "how many…", "what period…" by having the model write a small JSON query plan and running that plan in code over every row. It exists because the previous path, in which the model was shown the rows and asked for the answer, gave a different wrong answer on each run: a skipped row, two amounts swapped, an empty reply, dates converted in its head.
+
+What a later session should know:
+
+- **The model never sees the rows on this path.** It gets column names, types, three sample cells per column and the common opening wordings of text columns. Do not "improve" the planner by sending it data: the point is that no figure in the answer passes through the model.
+- **Three entry points, one engine.** `SmartDataQueryService.handleQuery` (data lane), the Ask route in `ConversationService`, and `LlmRouterService.route`, which sends a read-only table question typed in Action mode to the data lane. `looksLikeTableQuestion` is the gate in all three and is deliberately cheap; the planner can still decline.
+- **Declining is a feature.** The planner returns `unsupported` for anything needing arithmetic between results, judgement or a change, and a plan naming a column or operation that does not exist is thrown away. Either way the old path runs. Nothing here guesses.
+- **The answer is written by `table-query.format.ts`**, including the closing "Worked out from all N rows of <sheet>" line, or "Only N of M rows could be read" when the sheet reported more rows than arrived. That line is how a reader, and a test, can tell a computed answer from a model-written one.
+- **Dates:** a column is a date when the add-in's `columnMeta` says so (`detectedType` or a date `numberFormat`) and its cells are serials or date text. A bare number column in the 20,000 to 80,000 range is never taken for dates without that hint.
+- **Two fallbacks were tightened in passing:** an empty model reply in the data lane now returns `NO_ANSWER_MESSAGE`, and a plain-text reply to a question in `streamWithOpenAi` is returned as the answer with nothing appended.
+
+- **Rows an answer names are clickable** (TASKS.md #391). The server sends them as `matches` with `endCol`, the add-in swaps each "(row N)" in the text for a pointer. The text and the pointers come from the same results (`formatResult` and `rowsMentioned`), so change them together. A sheet whose used range does not start at A1 gets no pointers.
+- **A pointer field must be added in two places on the client** (TASKS.md #393). The pointers arrive in the `answer` event and again in a `matches` event, and the second replaces the first. `parseSseEventBlock` passes the first through as sent but rebuilds the second field by field, so a field missing from that list (`endCol` was) disappears before the click handler sees it. `SseMatchData` and the `matches` mapper in `client/src/utils/sseParser.ts` are the two places.
+
+Open edges are listed in TASKS.md #390.
+
+### 3.24 Two delete-sheet bugs found on the first live Excel run — Oct 9 2026 (TASKS.md #370, #371)
+
+Both surfaced in the same live Oct 8 run of `delete the @[Bank Statement]` and are general chat-pipeline bugs, not specific to the attachment import (§3.22) — any `DELETE_SHEET` through this path hits them.
+
+- **False post-apply warning (#370).** `generateDiff` (`Server/src/audit/diff.engine.ts`) emits a `CellChange` row for every cell a deleted sheet held, with `after: null`; `outcomeVerifier.ts`'s read-back groups these by sheet, finds the sheet itself gone, and reported that as `(sheet missing)` — the strongest failure code it has — for every action type including the one whose entire point was removing the sheet. Fixed with a new `deletedSheetNames` option (parallel to the existing `expectedSheetNames` structural check that closed the "Main" → "Main 2" gap): the caller (`App.tsx`) now collects every `DELETE_SHEET` action's `sheetName` and passes it through, and the read-back treats a sheet's absence as verified when its name is in that set, as a mismatch otherwise.
+- **`@[mention]` syntax missed the fast lane (#371).** `delete the @[Bank Statement]` took 44.8s through full Tier 3 because `detectDeleteSheetIntent` — in both the client (`client/src/utils/localSheetActions.ts`) and its mirrored server copy (`Server/src/excel-ai/utils/local-sheet-actions.util.ts`) — gated on the literal word "sheet"/"tab" appearing in the message, before the mention-aware helpers further down each file (`extractReferencedSheetNames`, already mention-aware) were ever reached. `isSheetTheDeleteObject` had the identical gate one step later. Both files' two functions now also accept an `@[...]` mention as proof the object is a sheet, falling back to the same NON_SHEET_DELETE_OBJECT/SHEET_AS_LOCATION check against the text between the delete verb and the mention — so "delete duplicates from @[X]" still correctly declines the fast lane.
+
+Client suite 791/791, server suite 2493/2493. Not yet re-verified live in Excel.
+
+### 3.25 Formatting can be reverted, from a snapshot taken in Excel — Oct 9 2026 (TASKS.md #400)
+
+A formatting action changes nothing the shadow workbook simulates, so a change set never had a "before" for it and `FORMAT_RANGE` / `AUTOFIT_COLUMNS` were flagged irreversible. Now the add-in reads what the action is about to overwrite, reports it with the apply call, and revert writes it back.
+
+What a later session should know:
+
+- **The inverse is the forward action with the old values.** `formatSnapshotsToInverseActions` (`Server/src/audit/format-snapshot.ts`) emits ordinary `FORMAT_RANGE` and `SET_COLUMN_WIDTH` actions. There is no restore action type, so no registry or catalog was touched. Anything `FORMAT_RANGE` cannot write (a per-edge border, a patterned fill, a justified alignment) therefore cannot be restored either, and is refused, not approximated.
+- **Two declarations of one shape.** `FormatSnapshot` is declared in `client/src/engine/formatSnapshot.ts` and in `Server/src/audit/format-snapshot.ts`. Change them together. The server re-validates every snapshot (`sanitizeFormatSnapshots`) because the body comes from the add-in and is later turned into actions that write to the workbook; a malformed one is kept as a refusal, never as data.
+- **Reversible per instance, decided twice.** `isFormatActionRestorable` runs at preview time, for the warning before Accept, and again at revert time, to know how many snapshots to expect. The add-in decides independently at apply time whether it could read the state. All three must agree on the limits (20,000 cells per range, 60,000 per change set, 200 columns), which are constants in both files.
+- **Fail closed, never partly.** `assertFormatSnapshotsComplete` refuses the whole revert when a snapshot is missing or marked `restorable: false`. It throws `RevertNoOpError`, which the controller already maps to 422 and the menu already shows as "Can't be undone".
+- **Order matters.** Formatting inverses come first in the list, ahead of the structural ones, and newest snapshot first. The first is so formatting reaches a sheet the same change set created before the inverse of that create deletes it; the second is so two actions on the same cells unwind to the oldest state.
+- **Checkpoint restore builds its own inverse** (`checkpoint.service.ts`, Phase 2) and had to be given the same step. Any future source of inverse actions needs it in both places, or a restore will report success and skip it.
+- **Excel on Windows does not report a fill's pattern** (seen live Oct 9: a solid fill read as `{ color: "#C6EFCE", pattern: null }`, for the cell and for the range). The pattern is what tells a fill from no fill, since an unfilled cell has a colour too. `fillFrom` (`client/src/engine/formatSnapshot.ts`) therefore compares each cell with the sheet's last cell, read in the same call, as its reference for "no fill". Do not replace this with a plain "white means no fill": it is the reference that keeps a white fill apart on an Excel that does report the difference. The one case it cannot get right is stated in the code. Two earlier attempts assumed the pattern would be reported somewhere; the fix came from logging what Excel returned, which the refusal path still does.
+- **`toLegacyFormat` used to drop `clearFill`.** A rich `FORMAT_RANGE` could set a fill but not remove one. Restoring "no fill" depends on that line.
+
+Seen working in Excel on Oct 9 for a fill, on a filled range and on an unfilled one (owner's screenshot). Column-width, number-format and alignment reverts have only been run in tests.
 
 ---
 

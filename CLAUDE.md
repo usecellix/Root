@@ -162,6 +162,26 @@ Every network call to the model provider becomes one `llm_calls` row (retries in
 ### Domain Tools (`cellix_backend/src/domain-tools/`)
 GST/ITC/TDS/bank-recon/Ind-AS stubs as deterministic functions — scaffolding only, unwired until CA sign-off.
 
+### Attachment Import (`Server/src/bank-statement/`, `Server/src/domain-tools/ingestion/`, `client/src/services/attachments/`)
+The composer's paperclip imports a bank statement (PDF, XLSX, XLS, CSV) into a new sheet. Full design and status: `ATTACHMENT_EXTRACTION_PLAN.md`. Traps: `CODEBASE_ANALYSIS.md` §3.22.
+
+- **The file is decoded in the task pane, never uploaded.** The client posts a *raw table* (rows of text, with positions for a PDF) to `POST /ingest/bank-statement`. The contract is declared on both sides (`client/src/types/rawTable.ts`, `Server/src/domain-tools/ingestion/raw-table.types.ts`); change them together.
+- **No LLM on this path.** Parsing and checking are plain functions under `domain-tools/ingestion/`, covered by `no-llm.guard.spec.ts`. An import is called verified only when every row's balance follows from the row before.
+- **A row that cannot be read is flagged, never dropped**, and every line after the header is accounted for.
+- **It only ever creates a new sheet**, through the normal preview and Accept. The sheet name is re-checked on Accept.
+- **Statement contents must stay out of four places**: `logs/requests.log` (`@SkipLogCapture` on the route, `rawTable` summarised in `sanitizeLogBody`), the chat history sent to the model, and the chat sessions saved to `localStorage` (`stripImportedRows`). A new attachment type needs the same four guards.
+- **Large request bodies are allowed per route** in `Server/src/common/http/route-body-limits.ts`. Do not raise the global limit.
+- **It is not a change set**: no Revert, no audit record (TASKS.md #365). **It has not been run inside Excel** (TASKS.md #364).
+- The owner's real sample statement lives in `Cellix/samples/`, outside every repo. Never commit it or quote from it.
+
+### Table Questions (`Server/src/excel-ai/table-query/`)
+A read-only question about a sheet's rows (total, largest N, count, period, per-month) is answered by a query plan the model writes and code executes over every row. Details and traps: `CODEBASE_ANALYSIS.md` §3.23.
+
+- **The model plans; code computes and writes the answer.** No figure in a computed answer passes through the model, and the planner is never sent the rows.
+- **A plan that names an unknown column or operation is discarded**, and the planner may answer `unsupported`. Both fall back to the previous path. Never patch a bad plan by guessing.
+- **A computed answer ends with "Worked out from all N rows of <sheet>".** Keep that line: it is how computed and model-written answers are told apart.
+- Entry points: `SmartDataQueryService.handleQuery`, the Ask route in `ConversationService`, and `LlmRouterService.route` (a question typed in Action mode goes to the data lane).
+
 ### Virtual / Shadow Workbook (`cellix_backend/src/virtual/`)
 `shadowWorkbook.ts` + `virtualApply.ts` — used for dry-run verification before Office.js apply.
 
@@ -170,6 +190,8 @@ GST/ITC/TDS/bank-recon/Ind-AS stubs as deterministic functions — scaffolding o
 
 ### Audit & Change Sets (`cellix_backend/src/audit/`)
 `ChangeSetService` captures before/after cell diffs for audit and revert. `CellChange.sourceRefs` + `exceptionFlags` for citation/provenance.
+
+**Formatting is reverted from a snapshot the add-in takes** (TASKS.md #400). The shadow workbook does not simulate formatting, so just before a `FORMAT_RANGE` / `AUTOFIT_COLUMNS` is applied the add-in reads what it will overwrite (`client/src/engine/formatSnapshot.ts`) and sends it with the apply call; revert writes it back as ordinary `FORMAT_RANGE` / `SET_COLUMN_WIDTH` actions (`Server/src/audit/format-snapshot.ts`). The snapshot shape is declared on both sides; change them together. A revert with a missing or unusable snapshot is refused whole, never done in part. Checkpoint restore builds its own inverse and needs the same step. Details: `CODEBASE_ANALYSIS.md` §3.25.
 
 ---
 

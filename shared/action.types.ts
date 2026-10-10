@@ -16,7 +16,7 @@ export interface FormatSpec {
   /** When true, remove background fill from the range (leaves font/borders intact). */
   clearFill?: boolean;
   numberFormat?: string;
-  horizontalAlignment?: 'left' | 'center' | 'right';
+  horizontalAlignment?: 'left' | 'center' | 'right' | 'general';
   verticalAlignment?: 'top' | 'middle' | 'bottom';
   wrapText?: boolean;
   borders?: {
