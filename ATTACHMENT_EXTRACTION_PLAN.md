@@ -182,9 +182,9 @@ When a row's amount ties only with the opposite sign, the printed balance wins a
 
 ### 6.5 User flow
 
-1. The user clicks the paperclip and picks a file. A small capsule appears at the top of the message box, above the text: an icon and the file name. The icon is a spinner while the file is read.
+1. The user clicks the paperclip and picks a file, or drags one from the desktop onto the task pane (`TASKS.md` #406; a dropped file takes the same path as a picked one). A small capsule appears at the top of the message box, above the text: an icon and the file name. The icon is a spinner while the file is read.
 2. The file is decoded in the task pane straight away and then **waits in the box**, like an attachment in any chat. The icon shows its type: a red document for a PDF, a green sheet for Excel or CSV.
-3. A protected PDF shows a lock on the capsule and a short password field beside it, already focused. The user types the password and presses Enter, which only unlocks the file.
+3. A protected PDF shows a lock on the capsule and a short password field beside it, already focused. The user types the password. It is tried quietly 600 ms after the last keystroke and the file unlocks by itself when it is right (a wrong guess shows nothing). Enter also works, and reports a wrong password. Unlocking never imports; that waits for Send (`TASKS.md` #405).
 4. The cursor is in the message box, whose placeholder reads "Ask about this statement, or press Enter to import it". The user either presses Enter, or types a question first and then presses Enter (or clicks Send).
 5. The thread shows one message: what the user typed, with the file as a chip on it ("Import this bank statement" when nothing was typed). The router and the model are not involved in the import.
 6. The card under it shows the row count, period, masked account number, balances, totals, the verification result and the first rows to check.
@@ -315,8 +315,8 @@ The owner's own six-month statement, kept in `Cellix/samples/`, which is outside
 
 Nothing below has been run. Each item is something the automated tests cannot see.
 
-1. Attach the Federal Bank PDF. The chip appears above the text and reads "Reading…", then a password field appears under it with the cursor in it.
-2. A wrong password shows an error and clears the field. The right password and Enter start the import. A file with no password imports with no further input.
+1. Attach the Federal Bank PDF. The chip appears above the text and reads "Reading…", then a password field appears beside it with the cursor in it.
+2. Type the right password: the file unlocks on its own about half a second after the last key, with no Enter, and waits for Send. A wrong password shows nothing while typing; pressing Enter on it shows an error and clears the field. A file with no password is read and waits for Send.
 3. The answer reports 834 transactions, the period, the masked account number, and "all 834 balances tie, and the totals match the statement".
 4. Before accepting, confirm the workbook has no new sheet.
 5. Accept. A sheet named `Bank Statement` appears with 834 rows under a frozen header.
@@ -334,6 +334,7 @@ Nothing below has been run. Each item is something the automated tests cannot se
 17. Repeat steps 1 to 5 in Excel on the web and on a Mac, where the webview is different.
 18. Note how long Accept takes for 834 rows.
 19. On the deployed server, import a statement over 1 MB once decoded (roughly 15 months of this account). The app allows 16 MiB on this route, but a reverse proxy or hosting platform in front of it may have its own lower limit and answer 413 first.
+20. Drag the PDF from File Explorer onto the pane (start screen, an open chat, and the message box). The overlay appears while dragging and disappears if you drag back out; on drop the chip appears as with the paperclip. A `.docx` dropped the same way is refused with the same message. Repeat in Excel on the web and on a Mac.
 
 ### 6.13 After the import: what works and what does not (smoke test, October 8)
 
@@ -368,7 +369,7 @@ A computed answer always ends with "Worked out from all N rows of <sheet>" and s
 |---|---|---|
 | 1 | Decode on the client and normalize on the server, or upload the raw file | Built as client decode, server normalize |
 | 2 | Is the layout in §6.2 right, including the Flag column | Built as drawn. Change it in `bank-statement-to-actions.mapper.ts` if not. |
-| 3 | Import as its own button on the chip, or run it when the chat message is sent | Built as its own button |
+| 3 | Import as its own button on the chip, or run it when the chat message is sent | Built as: it runs when the message is sent (§6.5). The button was removed. |
 | 4 | Which banks are supported first | Federal Bank PDF. Each further bank or format needs its own sample. |
 | 5 | Does extraction need CA sign-off before release | **Open.** The old stub's comment asked for a CA-reviewed fixture set. Extraction is transcription checked by arithmetic, not compliance logic, so the recommendation is that fixture review is enough. This is the owner's call. |
 | 6 | Unknown layout: ask the user to map columns, or add a model call for the mapping | **Open.** Neither is built; an unknown layout is refused (`TASKS.md` #367). |
@@ -401,3 +402,5 @@ Updated October 8, 2026 with slice 1:
 | 2026-10-08 | Flow changed twice more at the owner's request: the password only unlocks, every file waits for Send, and a question typed with the file is asked after Accept (§6.5). |
 | 2026-10-08 | Smoke test: 42 import files and 40 chat prompts. Results in §6.10 and new §6.13; findings filed as `TASKS.md` #379 to #387. |
 | 2026-10-08 | Single-message exchange for a question sent with a file (`TASKS.md` #388). Questions about a sheet's rows are now computed in code (`TASKS.md` #389); §6.13 updated. |
+| 2026-10-10 | A protected PDF now unlocks itself when the right password is typed (`TASKS.md` #405). §6.5 step 3, §6.12 items 1 and 2 and open decision 3 brought in line with the flow as built. |
+| 2026-10-10 | A file can also be dragged onto the task pane to attach it (`TASKS.md` #406). Live test checklist §6.12 gains item 20. |
